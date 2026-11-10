@@ -1,0 +1,5 @@
+<dl class="values">
+{% for field in fields %}
+  <div><dt>{{ field.label }}</dt><dd>{% if field.is_link %}<a href="{{ field.value }}" rel="noreferrer">{{ field.value }}</a>{% else %}{{ field.value|linebreaksbr }}{% endif %}</dd></div>
+{% empty %}<div>No profile fields to display.</div>{% endfor %}
+</dl>

@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block body %}
+<main class="workspace"><section class="card">
+  <h1>Professional profile</h1>
+  {% include "profiles/fields.html" %}
+  {% block portfolio %}{% endblock %}
+</section></main>
+{% endblock %}
