@@ -32,3 +32,11 @@ def signup(request, token):
             login(request, user)
             return redirect("dashboard")
     return render(request, "auth.html", {"form": form, "heading": "Create account", "email": invite.email})
+
+
+@login_required
+def help_center(request):
+    from .models import HelpArticle
+
+    articles = HelpArticle.objects.filter(published=True).order_by("title")
+    return render(request, "help_center.html", {"articles": articles})
