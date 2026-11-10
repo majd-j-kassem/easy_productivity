@@ -93,13 +93,13 @@ def validate_quantity(kind, quantity):
 class GoalInput(s.Serializer):
     name = s.CharField(max_length=160)
     metric = s.CharField(max_length=100, required=False)
-    kind = s.ChoiceField(choices=("count", "done", "hours"))
+    kind = s.ChoiceField(choices=("count", "done", "hours", "net_income"))
     quantity = target_quantity("0.01")
 
     def validate(self, attrs):
         kind = attrs["kind"]
         validate_quantity(kind, attrs["quantity"])
-        default_metric = "hours worked" if kind == "hours" else attrs["name"][:100]
+        default_metric = {"hours": "hours worked", "net_income": "net income"}.get(kind, attrs["name"][:100])
         attrs["metric"] = attrs.get("metric", default_metric).casefold()
         return attrs
 

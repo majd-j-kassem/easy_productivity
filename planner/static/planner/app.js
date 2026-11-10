@@ -123,16 +123,24 @@ async function reload() {
   if (token !== renderToken) return;
   renderProject(project, ...results);
 }
-function goalCard(goal, canChange, hourly) {
+function goalValue(value, kind, currency) {
+  return kind === "net_income" ? `${Number(value).toLocaleString("en")} ${escape(currency)}` : value;
+}
+function goalCard(goal, canChange, project) {
   const progress = goal.quantity ? Math.min(100, Math.round(goal.actual * 100 / goal.quantity)) : 100;
   const counter = goal.kind === "done" ? (goal.actual || goal.previous_actual ? "Done" : "Pending")
-    : `${goal.actual} / ${goal.quantity}${goal.kind === "hours" ? " h" : ""}`;
+    : `${goalValue(goal.actual, goal.kind, project.currency)} / ${goalValue(goal.quantity, goal.kind, project.currency)}${goal.kind === "hours" ? " h" : ""}`;
+  const ledgerNote = {
+    hours: "Updates from linked work in the income ledger.",
+    net_income: "Updates from after-tax income earned in this cycle.",
+  }[goal.kind];
   return `<div class="goal"><div class="line"><strong>${escape(goal.name)}</strong><span class="count">${counter}</span></div>
     <progress max="100" value="${progress}" aria-label="${escape(goal.name)}"></progress>
-    <small>${goal.cumulative} cumulative · ${goal.remaining_original} remaining against original target</small>
-    <div class="actions">${goal.kind === "hours" ? '<small>Updates from linked work in the income ledger.</small>'
+    <small>${goalValue(goal.cumulative, goal.kind, project.currency)} cumulative ·
+      ${goalValue(goal.remaining_original, goal.kind, project.currency)} remaining against original target</small>
+    <div class="actions">${ledgerNote ? `<small>${ledgerNote}</small>`
       : button("Daily entry", "entry", "", `data-target="${goal.id}" data-testid="daily-entry"`)}
-    ${canChange && hourly && goal.kind === "count" && !goal.actual && !goal.previous_actual
+    ${canChange && project.mode === "hourly" && goal.kind === "count" && !goal.actual && !goal.previous_actual
       ? button("Switch to hours", "goal-hours", "", `data-target="${goal.id}"`) : ""}
     ${canChange ? button("Delete goal", "delete-goal", "danger-outline", `data-target="${goal.id}"`) : ""}</div></div>`;
 }
@@ -158,8 +166,7 @@ function renderProject(project, cycle, ledger, report) {
       ${plan.reference_url ? `<p class="muted">Reference · ${escape(plan.reference_url)}</p>` : ""}
       ${Object.keys(plan.values).length ? `<dl class="values">${Object.entries(plan.values).map(([key, value]) =>
         `<div><dt>${escape(label(key))}</dt><dd>${escape(value)}</dd></div>`).join("")}</dl>` : ""}
-      ${plan.targets.map(goal => goalCard(goal, !cycle.closed_at && isOpen && plan.status === "open",
-        project.mode === "hourly")).join("")}
+      ${plan.targets.map(goal => goalCard(goal, !cycle.closed_at && isOpen && plan.status === "open", project)).join("")}
       <div class="actions">
       ${!cycle.closed_at && isOpen && plan.status === "open"
         ? button("Edit plan", "plan", "", `data-plan="${plan.id}"`) +
@@ -219,7 +226,7 @@ function renderProject(project, cycle, ledger, report) {
     "delete-goal": element => {
       const goal = findGoal(element);
       confirmDelete("goal", goal.name, path + `goals/${goal.goal_id}/`,
-        goal.kind === "hours" ? "Recorded work stays in the income ledger." : "Its recorded progress will also be deleted.");
+        ["hours", "net_income"].includes(goal.kind) ? "Recorded work stays in the income ledger." : "Its recorded progress will also be deleted.");
     },
     "goal-hours": element => hoursGoalForm(project, findGoal(element)),
     entry: element => {
@@ -402,7 +409,7 @@ function goalEditor(mode, remove) {
   row.className = "builder-row";
   row.innerHTML = `<div class="form-grid">${input("Goal name", "name", "", "text", "maxlength=160")}
     ${select("Measurement", "kind", [["done", "Done / not done"], ["count", "Count outputs"],
-      ["hours", "Hours worked"]], "done")}
+      ["hours", "Hours worked"], ["net_income", "Net income"]], "done")}
     ${input("Target quantity", "quantity", 1, "number")}</div>
     <details><summary>Reporting label (optional)</summary>
     ${input("Metric", "metric", "", "text", "maxlength=100")}</details>
@@ -410,13 +417,19 @@ function goalEditor(mode, remove) {
   const kind = row.querySelector("[name=kind]");
   const quantity = row.querySelector("[name=quantity]");
   function updateQuantity() {
-    quantity.closest("label").hidden = kind.value === "done";
-    quantity.min = kind.value === "hours" ? "0.01" : "1";
-    quantity.step = kind.value === "hours" ? "0.01" : "1";
+    const quantityLabel = quantity.closest("label");
+    quantityLabel.hidden = kind.value === "done";
+    quantityLabel.firstChild.textContent =
+      kind.value === "net_income" ? "Target amount (project currency)" : "Target quantity";
+    const decimal = ["hours", "net_income"].includes(kind.value);
+    quantity.min = decimal ? "0.01" : "1";
+    quantity.step = decimal ? "0.01" : "1";
   }
   function setMode(mode) {
     const hours = kind.querySelector('[value="hours"]');
+    const income = kind.querySelector('[value="net_income"]');
     hours.hidden = hours.disabled = mode !== "hourly" && kind.value !== "hours";
+    income.hidden = income.disabled = mode === "standard" && kind.value !== "net_income";
   }
   kind.onchange = () => { updateQuantity(); setMode(currentMode); };
   if (remove) row.querySelector("[data-action=remove-goal]").onclick = remove;
@@ -428,6 +441,9 @@ function goalEditor(mode, remove) {
     if (!data.name?.trim()) throw new Error("Enter a name for each goal or remove the empty goal.");
     if (data.kind === "hours" && currentMode !== "hourly") {
       throw new Error("Choose another measurement or change the project type to Hourly income.");
+    }
+    if (data.kind === "net_income" && currentMode === "standard") {
+      throw new Error("Choose another measurement or select an income project type.");
     }
     if (data.kind !== "done" && (!data.quantity || !quantity.checkValidity())) {
       throw new Error("Enter a valid positive target quantity.");

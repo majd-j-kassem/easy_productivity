@@ -176,6 +176,11 @@ def require_hourly_project(project):
 def create_goal(plan, data):
     if data["kind"] == "hours":
         require_hourly_project(plan.cycle.project)
+    elif data["kind"] == "net_income":
+        if plan.cycle.project.mode == "standard":
+            raise ValidationError("A Net income goal requires an income project.")
+        if Target.objects.filter(plan__cycle=plan.cycle, goal__kind="net_income").exists():
+            raise ValidationError("This cycle already has a project-wide Net income goal.")
     quantity = data.pop("quantity")
     goal = Goal.objects.create(task=plan.task, **data)
     Target.objects.create(plan=plan, goal=goal, quantity=quantity)
@@ -308,8 +313,8 @@ def entry(request, pk, target_id, day):
         return Response({"day": parsed_day, "items": row.items if row else [],
                          "corrections": [fields_of(change, "previous revised reason created_at")
                                          for change in row.corrections.order_by("id")] if row else []})
-    if target.goal.kind == "hours":
-        raise ValidationError("Hours worked are recorded in the income ledger.")
+    if target.goal.kind in {"hours", "net_income"}:
+        raise ValidationError("This goal is calculated from the income ledger.")
     data = validate(inputs.EntryInput, request)
     items = clean_items(target.goal, data["items"])
     if cycle.closed_at or project.status == "closed":

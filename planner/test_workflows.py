@@ -226,3 +226,39 @@ def test_convert_existing_goal_uses_linked_hours_and_protects_ledger(account):
         assert client.delete(f"/api/v1/{path}tasks/{plan['task_id']}/").status_code == 400
         assert client.delete(goal_url).status_code == 204
         assert len(client.get(f"/api/v1/{path}ledger/").data["items"]) == 2
+
+
+def test_net_income_goal_counts_after_tax_work_in_its_project_and_cycle(account):
+    _, client = account
+    goal = {"name": "Weekly income", "kind": "net_income", "quantity": "50000"}
+    with patch("planner.api.today_for", return_value=date(2026, 11, 15)):
+        standard = make_project(client)
+        response = client.post(f"/api/v1/{standard}tasks/", {"name": "Income", "goals": [goal]}, format="json")
+        assert response.status_code == 400
+
+        path = make_project(client, start="2026-11-01", mode="hourly", currency="HUF")
+        other = make_project(client, mode="hourly")
+        terms = {"effective_on": "2026-11-01", "rate": "10000", "tax_pct": "20"}
+        post(client, path + "terms/", terms)
+        post(client, other + "terms/", terms)
+        post(client, other + "ledger/hourly/", {"work_day": "2026-11-12", "hours": "3"})
+        plan = post(client, path + "tasks/", {"name": "Income", "goals": [goal]})
+        response = client.post(f"/api/v1/{path}tasks/", {"name": "Duplicate", "goals": [goal]}, format="json")
+        assert response.status_code == 400
+        item = post(client, path + "ledger/hourly/", {"work_day": "2026-11-12", "hours": "4"})
+        post(client, path + f"ledger/{item['id']}/payments/", {"received_on": "2026-11-15", "amount": "1000"})
+        first_cycle = client.get(f"/api/v1/{path}").data["cycles"][0]
+        reason = post(client, "reasons/", {"label": "Carry income"})
+        next_cycle = post(client, path + f"cycles/{first_cycle['id']}/review/", {
+            "decisions": {str(plan["id"]): {"action": "carry", "reason_id": reason["id"]}},
+        })["next"]
+
+    with patch("planner.api.today_for", return_value=date(2026, 11, 17)):
+        post(client, path + "ledger/hourly/", {"work_day": "2026-11-17", "hours": "1"})
+        target = client.get(f"/api/v1/{path}cycles/{next_cycle['id']}/").data["plans"][0]["targets"][0]
+        assert target["kind"] == "net_income"
+        assert (target["previous_actual"], target["actual"], target["quantity"]) == (32000, 8000, 18000)
+        response = client.put(
+            f"/api/v1/{path}targets/{target['id']}/entries/2026-11-17/", {"items": [{}]}, format="json",
+        )
+        assert response.status_code == 400

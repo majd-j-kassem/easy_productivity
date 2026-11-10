@@ -97,7 +97,10 @@ class Goal(models.Model):
     task = models.ForeignKey(Task, on_delete=models.CASCADE, related_name="goals")
     name = models.CharField(max_length=160)
     metric = models.CharField(max_length=100)
-    kind = models.CharField(max_length=5, choices=[("count", "Count"), ("done", "Done"), ("hours", "Hours worked")])
+    kind = models.CharField(
+        max_length=10,
+        choices=[("count", "Count"), ("done", "Done"), ("hours", "Hours worked"), ("net_income", "Net income")],
+    )
 
 
 class Plan(models.Model):

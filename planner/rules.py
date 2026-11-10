@@ -53,12 +53,13 @@ def next_cycle(previous):
 
 
 def target_actual(target):
-    if target.goal.kind == "hours":
+    kind = target.goal.kind
+    if kind in {"hours", "net_income"}:
         cycle = target.plan.cycle
-        total = Receivable.objects.filter(
-            project_id=cycle.project_id, task_id=target.goal.task_id,
-            work_day__range=(cycle.start, cycle.end),
-        ).aggregate(total=Sum("hours"))["total"]
+        rows = Receivable.objects.filter(project_id=cycle.project_id, work_day__range=(cycle.start, cycle.end))
+        if kind == "hours":
+            rows = rows.filter(task_id=target.goal.task_id)
+        total = rows.aggregate(total=Sum("hours" if kind == "hours" else "net"))["total"]
         return money(total or Decimal(0))
     total = 0
     for entry in target.entries.all():
