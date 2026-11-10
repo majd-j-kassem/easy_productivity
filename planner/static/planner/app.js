@@ -160,8 +160,8 @@ function renderProject(project, cycle, ledger, report) {
     <ul class="ledger-list">${project.cycles.map(item => `<li class="line">
       ${button(`Cycle ${item.sequence} · ${item.start} to ${item.end}`, "view-cycle",
         item.id === cycle?.id ? "primary" : "", `data-cycle="${item.id}"`)}
-      <span class="pill">${escape(label(item.status))}</span></li>`).join("")}</ul></article>`;
-  const cycleSection = cycle ? `<article class="card"><div class="line"><h2>Cycle ${cycle.sequence}</h2><span class="pill">${escape(label(cycle.status))}</span></div>
+      <span class="pill" data-state="${escape(item.status)}">${escape(label(item.status))}</span></li>`).join("")}</ul></article>`;
+  const cycleSection = cycle ? `<article class="card"><div class="line"><h2>Cycle ${cycle.sequence}</h2><span class="pill" data-state="${escape(cycle.status)}">${escape(label(cycle.status))}</span></div>
     <div class="cycle-toolbar"><p>${cycle.start} to ${cycle.end}</p>
     ${select("Filter tasks", "local-status", taskStatuses)}</div>
     ${cycle.is_draft ? '<p class="muted">You can plan this cycle now. Progress opens after the previous cycle closes and the start date arrives.</p>' : ""}
@@ -170,7 +170,7 @@ function renderProject(project, cycle, ledger, report) {
     ${cycle.status === "review" && isOpen ? button("Review and close cycle", "review", "primary", 'data-testid="review-cycle"') : ""}</div>
     <div id="plans">${cycle.plans.map(plan => `<section class="task" data-status="${escape(plan.status)}">
       <div class="line"><div><h3>${escape(plan.name)}</h3><small>${plan.kind ? `${escape(plan.kind)} · ` : ""}${escape(plan.priority)} priority</small></div>
-      <span class="pill">${escape(plan.decision || plan.status)}</span></div>
+      <span class="pill" data-state="${escape(plan.status)}">${escape(plan.decision || plan.status)}</span></div>
       ${plan.reason ? `<p class="muted">${escape(plan.reason)} ${escape(plan.note)}</p>` : ""}
       ${plan.description ? `<p>${escape(plan.description)}</p>` : ""}
       ${plan.reference_url ? `<p class="muted">Reference · ${escape(plan.reference_url)}</p>` : ""}
@@ -188,7 +188,7 @@ function renderProject(project, cycle, ledger, report) {
         ? button("Delete task", "delete-task", "danger-outline", `data-plan="${plan.id}"`) : ""}</div></section>`).join("") ||
     '<p class="muted">No tasks planned in this cycle.</p>'}</div></article>` : "";
   detail.innerHTML = `<article class="card project-header"><div class="line"><div><p class="eyebrow">Selected project</p>
-    <h2>${escape(project.name)}</h2></div><span class="pill">${escape(label(project.status))}</span></div>
+    <h2>${escape(project.name)}</h2></div><span class="pill" data-state="${escape(project.status)}">${escape(label(project.status))}</span></div>
     <dl class="values"><div><dt>Started</dt><dd>${project.start}</dd></div>
     <div><dt>Planned end</dt><dd>${project.planned_end || "—"}</dd></div>
     <div><dt>Review interval</dt><dd>${project.interval} ${escape(project.interval_unit)}</dd></div>
