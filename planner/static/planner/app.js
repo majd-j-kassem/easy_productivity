@@ -149,8 +149,9 @@ function renderProject(project, cycle, ledger, report) {
   const isOpen = project.status === "active";
   const reportSection = report ? `<article class="card"><div class="line"><h2>Final report</h2><div class="actions">
     <a class="button" href="${root + path}report.pdf">Download PDF</a><a class="button" href="${root + path}report.xlsx">Download Excel</a>
-    </div></div>${table(["Task", "Goal", "Planned", "Actual", "Gap", "Reason"],
-      report.goals.map(row => [row.task, row.goal, row.planned, row.actual, row.gap, row.reason]))}</article>` : "";
+    </div></div>${table(["Task", "Status"], report.tasks.map(row => [row.task, row.status]))}
+    ${report.goals.length ? table(["Task", "Goal", "Planned", "Actual", "Gap", "Reason"],
+      report.goals.map(row => [row.task, row.goal, row.planned, row.actual, row.gap, row.reason])) : ""}</article>` : "";
   const currentCycle = project.cycles.find(row => !row.closed_at);
   const cycleSection = cycle ? `<article class="card"><div class="line"><h2>Cycle ${cycle.sequence}</h2><span class="pill">${escape(label(cycle.status))}</span></div>
     <div class="cycle-toolbar"><p>${cycle.start} to ${cycle.end}</p>
