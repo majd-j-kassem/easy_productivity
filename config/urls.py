@@ -3,9 +3,11 @@ from django.contrib.auth import views as auth
 from django.urls import path
 
 from planner import api, reports, views
+from profiles.views import edit_profile
 
 urlpatterns = [
     path("", views.dashboard, name="dashboard"),
+    path("profile/", edit_profile, name="edit_profile"),
     path("login/", auth.LoginView.as_view(template_name="auth.html",
                                           extra_context={"heading": "Sign in"}), name="login"),
     path("logout/", auth.LogoutView.as_view(), name="logout"),
