@@ -612,3 +612,14 @@ def notification_read(request, pk):
         row.read_at = timezone.now()
         row.save(update_fields=["read_at"])
     return Response({"read_at": row.read_at})
+
+
+@api_view(["GET"])
+def project_templates(request):
+    from .models import OnboardingTemplate
+
+    return Response([
+        {"id": row.pk, "title": row.title, "description": row.description, "mode": row.mode,
+         "tasks": [line.strip()[:160] for line in row.tasks.splitlines() if line.strip()][:50]}
+        for row in OnboardingTemplate.objects.filter(enabled=True).order_by("id")
+    ])

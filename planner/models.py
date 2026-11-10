@@ -185,3 +185,14 @@ class Notification(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     read_at = models.DateTimeField(null=True)
     emailed_at = models.DateTimeField(null=True)
+
+
+class OnboardingTemplate(models.Model):
+    title = models.CharField(max_length=120)
+    description = models.CharField(max_length=240)
+    mode = models.CharField(max_length=10, choices=Project.MODES)
+    tasks = models.TextField(help_text="One suggested task per line.")
+    enabled = models.BooleanField(default=True)
+
+    def __str__(self):
+        return self.title
