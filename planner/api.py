@@ -13,7 +13,7 @@ from .models import (Correction, Cycle, DailyEntry, Goal, Notification, PayTerms
                      Plan, Project, Reason, Target, Task, TaskKind)
 from .presenters import cycle_data, fields_of, kind_data, plan_data, project_data, receivable_data
 from .rules import (balance, build_receivable, clean_items, clean_values, default_first_review,
-                    paid, payable, profile_for, today_for)
+                    paid, payable, profile_for, target_actual, today_for)
 from .services import (apply_decisions, close_cycle, generate_months, last_of_month,
                        missing_months, month_is_full)
 
@@ -280,6 +280,11 @@ def plan_detail(request, pk, plan_id):
     cycle = planning_cycle(project, today_for(request.user))
     plan = get_object_or_404(cycle.plans, pk=plan_id, task__status="open")
     data = validate(inputs.PlanInput, request)
+    task_updates = {key: data[key] for key in ("name", "description", "reference_url") if key in data}
+    for key, value in task_updates.items():
+        setattr(plan.task, key, value)
+    if task_updates:
+        plan.task.save(update_fields=list(task_updates))
     if "priority" in data:
         plan.priority = data["priority"]
         plan.save(update_fields=["priority"])
@@ -495,6 +500,30 @@ def monthly(request, pk):
     return Response(receivable_data(row), status=201)
 
 
+@api_view(["DELETE"])
+@transaction.atomic
+def receivable_detail(request, pk, receivable_id):
+    project = owned(request, pk, lock=True)
+    active(project)
+    row = get_object_or_404(project.receivables, pk=receivable_id)
+    if row.payments.exists():
+        raise ValidationError("Delete the recorded payments for this entry first.")
+    if project.cycles.filter(closed_at__isnull=False, start__lte=row.work_day, end__gte=row.work_day).exists():
+        raise ValidationError("This entry belongs to a closed cycle and is kept for reporting.")
+    if row.month and month_is_full(project, row.month) and last_of_month(row.month) <= today_for(request.user):
+        raise ValidationError("A full-month receivable is generated automatically and cannot be deleted.")
+    completed = Target.objects.select_related("goal", "plan__cycle").filter(
+        plan__cycle__project=project, plan__cycle__start__lte=row.work_day,
+        plan__cycle__end__gte=row.work_day, plan__task__status="completed",
+    ).filter(Q(goal__kind="net_income") | Q(goal__kind="hours", goal__task_id=row.task_id))
+    for target in completed:
+        contribution = row.net if target.goal.kind == "net_income" else row.hours or Decimal(0)
+        if contribution and target_actual(target) - contribution < target.quantity:
+            raise ValidationError("This entry is needed to meet a completed goal.")
+    row.delete()
+    return Response(status=204)
+
+
 @api_view(["POST"])
 @transaction.atomic
 def payments(request, pk, receivable_id):
@@ -509,6 +538,18 @@ def payments(request, pk, receivable_id):
         raise ValidationError({"amount": "The payment exceeds the remaining amount."})
     Payment.objects.create(receivable=row, **data)
     return Response(receivable_data(row), status=201)
+
+
+@api_view(["DELETE"])
+@transaction.atomic
+def payment_detail(request, pk, receivable_id, payment_id):
+    project = owned(request, pk, lock=True)
+    if project.status == "closed":
+        raise ValidationError("The project is already closed.")
+    row = get_object_or_404(project.receivables, pk=receivable_id)
+    payment = get_object_or_404(row.payments, pk=payment_id)
+    payment.delete()
+    return Response(status=204)
 
 
 @api_view(["GET"])

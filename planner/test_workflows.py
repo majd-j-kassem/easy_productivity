@@ -262,3 +262,57 @@ def test_net_income_goal_counts_after_tax_work_in_its_project_and_cycle(account)
             f"/api/v1/{path}targets/{target['id']}/entries/2026-11-17/", {"items": [{}]}, format="json",
         )
         assert response.status_code == 400
+
+
+def test_edit_plan_updates_task_details_without_changing_done_goal(account):
+    _, client = account
+    with patch("planner.api.today_for", return_value=date(2026, 11, 15)):
+        path = make_project(client)
+        plan = post(client, path + "tasks/", {
+            "name": "Draft", "goals": [{"name": "Publish", "kind": "done", "quantity": 1}],
+        })
+        url = f"/api/v1/{path}plans/{plan['id']}/"
+        details = {"name": "Updated task", "description": "Review the draft",
+                   "reference_url": "https://example.org/draft", "priority": "high"}
+        response = client.patch(url, details, format="json")
+        assert response.status_code == 200, response.data
+        assert {key: response.data[key] for key in details} == details
+        assert response.data["targets"] == plan["targets"]
+        target_id = plan["targets"][0]["id"]
+        response = client.patch(url, {"name": "Invalid edit", "targets": {str(target_id): 2}}, format="json")
+        assert response.status_code == 400
+        response = client.patch(url, {}, format="json")
+        assert response.data["name"] == "Updated task"
+
+
+def test_delete_ledger_payment_then_income_entry(account, django_user_model):
+    owner, client = account
+    with patch("planner.api.today_for", return_value=date(2026, 11, 15)):
+        path = make_project(client, mode="hourly")
+        post(client, path + "terms/", {"effective_on": "2026-11-09", "rate": "2000", "tax_pct": "0"})
+        plan = post(client, path + "tasks/", {
+            "name": "Income", "goals": [{"name": "Cycle income", "kind": "net_income", "quantity": 5000}],
+        })
+        item = post(client, path + "ledger/hourly/", {"work_day": "2026-11-12", "hours": "2"})
+        item_url = f"/api/v1/{path}ledger/{item['id']}/"
+        paid_item = post(client, path + f"ledger/{item['id']}/payments/", {
+            "received_on": "2026-11-15", "amount": "1000",
+        })
+        payment_url = item_url + f"payments/{paid_item['payments'][0]['id']}/"
+        assert client.delete(item_url).status_code == 400
+        client.force_authenticate(django_user_model.objects.create_user("ledger-other"))
+        assert client.delete(payment_url).status_code == 404
+        assert client.delete(item_url).status_code == 404
+        client.force_authenticate(owner)
+        assert client.delete(payment_url).status_code == 204
+        ledger = client.get(f"/api/v1/{path}ledger/").data
+        assert ledger["received_by_month"] == {} and ledger["remaining"] == 4000
+        assert client.delete(item_url).status_code == 204
+        assert client.get(f"/api/v1/{path}ledger/").data["items"] == []
+        cycle = client.get(f"/api/v1/{path}").data["cycles"][0]
+        updated = client.get(f"/api/v1/{path}cycles/{cycle['id']}/").data["plans"][0]
+        assert updated["id"] == plan["id"] and updated["targets"][0]["actual"] == 0
+
+        needed = post(client, path + "ledger/hourly/", {"work_day": "2026-11-12", "hours": "3"})
+        post(client, path + f"plans/{plan['id']}/complete/", {})
+        assert client.delete(f"/api/v1/{path}ledger/{needed['id']}/").status_code == 400

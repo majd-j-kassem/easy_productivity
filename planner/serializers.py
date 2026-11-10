@@ -122,6 +122,9 @@ class ProjectSetupInput(ProjectInput):
 
 
 class PlanInput(s.Serializer):
+    name = s.CharField(max_length=160, required=False)
+    description = s.CharField(max_length=2000, allow_blank=True, required=False)
+    reference_url = s.URLField(max_length=2048, allow_blank=True, required=False)
     priority = s.ChoiceField(choices=PRIORITIES, required=False)
     targets = s.DictField(child=target_quantity("0"), required=False)
 

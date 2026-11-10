@@ -237,6 +237,17 @@ function renderProject(project, cycle, ledger, report) {
     terms: () => termsForm(project), hourly: () => hourlyForm(project, cycle),
     monthly: () => monthlyForm(project),
     payment: element => paymentForm(project, ledger.items.find(item => item.id === Number(element.dataset.receivable))),
+    "delete-receivable": element => {
+      const item = ledger.items.find(row => row.id === Number(element.dataset.receivable));
+      confirmDelete("income entry", item.month?.slice(0, 7) || item.work_day, path + `ledger/${item.id}/`,
+        "Any goal progress based on this entry will be recalculated.");
+    },
+    "delete-payment": element => {
+      const item = ledger.items.find(row => row.id === Number(element.dataset.receivable));
+      const payment = item.payments.find(row => row.id === Number(element.dataset.payment));
+      confirmDelete("payment", `${payment.amount} ${project.currency} on ${payment.received_on}`,
+        path + `ledger/${item.id}/payments/${payment.id}/`, "The outstanding balance will increase.");
+    },
   };
   detail.querySelectorAll("[data-action]").forEach(element => {
     element.onclick = safe(() => actions[element.dataset.action](element));
@@ -521,13 +532,20 @@ function hoursGoalForm(project, goal) {
   }, "Switch to hours");
 }
 function planForm(project, plan) {
-  modalForm("Edit cycle plan", `${select("Priority", "priority", priorities, plan.priority)}
-    ${plan.targets.filter(target => target.kind !== "done").map(target =>
-    number(`Target for ${target.name}`, `target-${target.id}`, target.quantity)).join("")}`,
-  async data => {
-    const targets = Object.fromEntries(Object.entries(data).filter(([key]) => key.startsWith("target-"))
-      .map(([key, value]) => [key.slice(7), value]));
-    await api(projectPath(project.id) + `plans/${plan.id}/`, "PATCH", {priority: data.priority, targets});
+  const goals = plan.targets.map(target => target.kind === "done"
+    ? `<p><strong>${escape(target.name)}</strong> · Done / not done</p>`
+    : number(`Target for ${target.name}${target.kind === "net_income" ? ` (${project.currency})` : ""}`,
+      `target-${target.id}`, target.quantity)).join("");
+  modalForm("Edit cycle plan", `<div class="form-grid">
+    ${input("Task name", "name", plan.name, "text", "maxlength=160")}
+    ${select("Priority", "priority", priorities, plan.priority)}
+    <label>Description<textarea name="description" maxlength="2000" rows="2">${escape(plan.description)}</textarea></label>
+    ${input("Reference URL", "reference_url", plan.reference_url, "url", "maxlength=2048")}</div>
+    <fieldset><legend>Goals</legend>${goals || '<p class="muted">No goals in this cycle. Use Add goal to create one.</p>'}</fieldset>`,
+  async ({name, description, reference_url, priority, ...quantities}) => {
+    const targets = Object.fromEntries(Object.entries(quantities).map(([key, value]) => [key.slice(7), value]));
+    await api(projectPath(project.id) + `plans/${plan.id}/`, "PATCH",
+      {name, description, reference_url, priority, targets});
     await reload();
   });
 }
@@ -618,8 +636,14 @@ function ledgerHtml(project, ledger) {
     <div><dt>Received</dt><dd>${escape(item.received)}</dd></div><div><dt>Remaining</dt><dd>${escape(item.remaining)}</dd></div>
     ${item.hours ? `<div><dt>Hours</dt><dd>${escape(item.hours)}</dd></div>` : ""}
     ${item.location ? `<div><dt>Location</dt><dd>${escape(item.location)}</dd></div>` : ""}</dl>
-    ${item.payments.length ? table(["Receipt date", "Amount"], item.payments.map(payment => [payment.received_on, payment.amount])) : ""}
-    ${project.status !== "closed" && Number(item.remaining) > 0 ? button("Record payment", "payment", "", `data-receivable="${item.id}"`) : ""}</li>`).join("");
+    ${item.payments.length ? `<ul class="ledger-list" aria-label="Payments">${item.payments.map(payment => `<li class="line">
+      <span>${escape(payment.received_on)} · ${escape(payment.amount)} ${escape(ledger.currency)}</span>
+      ${project.status !== "closed" ? button("Delete payment", "delete-payment", "danger-outline",
+        `data-receivable="${item.id}" data-payment="${payment.id}"`) : ""}</li>`).join("")}</ul>` : ""}
+    <div class="actions">
+    ${project.status !== "closed" && Number(item.remaining) > 0 ? button("Record payment", "payment", "", `data-receivable="${item.id}"`) : ""}
+    ${active && !item.payments.length ? button("Delete income entry", "delete-receivable", "danger-outline", `data-receivable="${item.id}"`) : ""}
+    </div></li>`).join("");
   return `<article class="card"><div class="line"><h2>Income ledger · ${escape(ledger.currency)}</h2><span class="pill">${escape(ledger.remaining)} remaining</span></div>
     <div class="actions">${active ? button("Pay terms", "terms") + (project.mode === "hourly"
       ? button("Record hourly work", "hourly", "primary") : button("Record partial month", "monthly", "primary")) : ""}</div>
