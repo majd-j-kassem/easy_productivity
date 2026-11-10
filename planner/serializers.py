@@ -78,16 +78,29 @@ class KindInput(s.Serializer):
         return attrs
 
 
+def target_quantity(minimum):
+    return s.DecimalField(max_digits=9, decimal_places=2, min_value=Decimal(minimum),
+                          max_value=Decimal("1000000"))
+
+
+def validate_quantity(kind, quantity):
+    if kind == "done" and quantity not in (0, 1):
+        raise s.ValidationError({"quantity": "A Done goal has a target of one."})
+    if kind == "count" and quantity != quantity.to_integral_value():
+        raise s.ValidationError({"quantity": "A Count goal needs a whole number."})
+
+
 class GoalInput(s.Serializer):
     name = s.CharField(max_length=160)
-    metric = s.CharField(max_length=100)
-    kind = s.ChoiceField(choices=("count", "done"))
-    quantity = s.IntegerField(min_value=1, max_value=1000000)
+    metric = s.CharField(max_length=100, required=False)
+    kind = s.ChoiceField(choices=("count", "done", "hours", "net_income"))
+    quantity = target_quantity("0.01")
 
     def validate(self, attrs):
-        if attrs["kind"] == "done" and attrs["quantity"] != 1:
-            raise s.ValidationError("A Done goal has a target of one.")
-        attrs["metric"] = attrs["metric"].strip().casefold()
+        kind = attrs["kind"]
+        validate_quantity(kind, attrs["quantity"])
+        default_metric = {"hours": "hours worked", "net_income": "net income"}.get(kind, attrs["name"][:100])
+        attrs["metric"] = attrs.get("metric", default_metric).casefold()
         return attrs
 
 
@@ -95,16 +108,29 @@ PRIORITIES = ("low", "normal", "high")
 
 
 class TaskInput(s.Serializer):
-    kind_id = s.IntegerField(min_value=1)
+    kind_id = s.IntegerField(min_value=1, required=False)
     name = s.CharField(max_length=160)
     priority = s.ChoiceField(choices=PRIORITIES, default="normal")
+    description = s.CharField(max_length=2000, default="", allow_blank=True)
+    reference_url = s.URLField(max_length=2048, default="", allow_blank=True)
     values = s.DictField(default=dict)
-    goals = GoalInput(many=True, allow_empty=False, max_length=20)
+    goals = GoalInput(many=True, default=list, max_length=20)
+
+
+class ProjectSetupInput(ProjectInput):
+    tasks = TaskInput(many=True, default=list, max_length=50)
 
 
 class PlanInput(s.Serializer):
+    name = s.CharField(max_length=160, required=False)
+    description = s.CharField(max_length=2000, allow_blank=True, required=False)
+    reference_url = s.URLField(max_length=2048, allow_blank=True, required=False)
     priority = s.ChoiceField(choices=PRIORITIES, required=False)
-    targets = s.DictField(child=s.IntegerField(min_value=0, max_value=1000000), required=False)
+    targets = s.DictField(child=target_quantity("0"), required=False)
+
+
+class HoursGoalInput(s.Serializer):
+    quantity = target_quantity("0.01")
 
 
 class EntryInput(s.Serializer):

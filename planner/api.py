@@ -13,7 +13,7 @@ from .models import (Correction, Cycle, DailyEntry, Goal, Notification, PayTerms
                      Plan, Project, Reason, Target, Task, TaskKind)
 from .presenters import cycle_data, fields_of, kind_data, plan_data, project_data, receivable_data
 from .rules import (balance, build_receivable, clean_items, clean_values, default_first_review,
-                    paid, payable, profile_for, today_for)
+                    paid, payable, profile_for, target_actual, today_for)
 from .services import (apply_decisions, close_cycle, generate_months, last_of_month,
                        missing_months, month_is_full)
 
@@ -80,7 +80,8 @@ def reason_detail(request, pk):
 @transaction.atomic
 def projects(request):
     if request.method == "POST":
-        data = validate(inputs.ProjectInput, request)
+        data = validate(inputs.ProjectSetupInput, request)
+        initial_tasks = data.pop("tasks")
         profile = profile_for(request.user)
         data.setdefault("interval", profile.interval)
         data.setdefault("interval_unit", profile.interval_unit)
@@ -91,7 +92,9 @@ def projects(request):
             raise ValidationError({"planned_end": "The end must be on or after the start."})
         data["currency"] = data.get("currency", profile.currency).upper() if data.get("mode", "standard") != "standard" else ""
         project = Project.objects.create(owner=request.user, **data)
-        Cycle.objects.create(project=project, sequence=1, start=project.start, end=project.first_review)
+        cycle = Cycle.objects.create(project=project, sequence=1, start=project.start, end=project.first_review)
+        for task_data in initial_tasks:
+            create_task(project, cycle, task_data)
         return Response(project_data(project), status=201)
     rows = Project.objects.filter(owner=request.user).order_by("-id")
     query = request.query_params
@@ -145,12 +148,17 @@ def kinds(request, pk):
     return Response(kind_data(TaskKind.objects.create(project=project, **data)), status=201)
 
 
-@api_view(["PATCH"])
+@api_view(["PATCH", "DELETE"])
 @transaction.atomic
 def kind_detail(request, pk, kind_id):
     project = owned(request, pk, lock=True)
     active(project)
     kind = get_object_or_404(project.kinds, pk=kind_id)
+    if request.method == "DELETE":
+        if project.tasks.filter(kind=kind).exists():
+            raise ValidationError("This task type is still used by existing tasks.")
+        kind.delete()
+        return Response(status=204)
     form = inputs.KindInput(data=request.data, partial=True)
     form.is_valid(raise_exception=True)
     for key, value in form.validated_data.items():
@@ -160,22 +168,95 @@ def kind_detail(request, pk, kind_id):
     return Response(kind_data(kind))
 
 
+def require_hourly_project(project):
+    if project.mode != "hourly":
+        raise ValidationError("An Hours worked goal requires an hourly income project.")
+
+
+def create_goal(plan, data):
+    if data["kind"] == "hours":
+        require_hourly_project(plan.cycle.project)
+    elif data["kind"] == "net_income":
+        if plan.cycle.project.mode == "standard":
+            raise ValidationError("A Net income goal requires an income project.")
+        if Target.objects.filter(plan__cycle=plan.cycle, goal__kind="net_income").exists():
+            raise ValidationError("This cycle already has a project-wide Net income goal.")
+    quantity = data.pop("quantity")
+    goal = Goal.objects.create(task=plan.task, **data)
+    Target.objects.create(plan=plan, goal=goal, quantity=quantity)
+
+
+def create_task(project, cycle, data):
+    kind = get_object_or_404(project.kinds, pk=data["kind_id"]) if "kind_id" in data else None
+    task_fields = kind.task_fields if kind else []
+    task = Task.objects.create(
+        project=project, kind=kind, name=data["name"], description=data["description"],
+        reference_url=data["reference_url"], values=clean_values(task_fields, data["values"]),
+        task_fields=task_fields, entry_fields=kind.entry_fields if kind else [],
+    )
+    plan = Plan.objects.create(cycle=cycle, task=task, priority=data["priority"])
+    for item in data["goals"]:
+        create_goal(plan, item)
+    return plan
+
+
 @api_view(["POST"])
 @transaction.atomic
 def tasks(request, pk):
     project = owned(request, pk, lock=True)
     cycle = planning_cycle(project, today_for(request.user))
-    data = validate(inputs.TaskInput, request)
-    kind = get_object_or_404(project.kinds, pk=data["kind_id"])
-    values = clean_values(kind.task_fields, data["values"])
-    task = Task.objects.create(project=project, kind=kind, name=data["name"], values=values,
-                               task_fields=kind.task_fields, entry_fields=kind.entry_fields)
-    plan = Plan.objects.create(cycle=cycle, task=task, priority=data["priority"])
-    for item in data["goals"]:
-        quantity = item.pop("quantity")
-        goal = Goal.objects.create(task=task, **item)
-        Target.objects.create(plan=plan, goal=goal, quantity=quantity)
+    return Response(plan_data(create_task(project, cycle, validate(inputs.TaskInput, request))), status=201)
+
+
+@api_view(["DELETE"])
+@transaction.atomic
+def task_detail(request, pk, task_id):
+    project = owned(request, pk, lock=True)
+    active(project)
+    task = get_object_or_404(project.tasks, pk=task_id)
+    if task.plans.filter(cycle__closed_at__isnull=False).exists():
+        raise ValidationError("This task is part of a closed cycle and is kept for reporting.")
+    if project.receivables.filter(task=task).exists():
+        raise ValidationError("This task is linked to recorded work in the income ledger.")
+    task.delete()
+    return Response(status=204)
+
+
+@api_view(["POST"])
+@transaction.atomic
+def plan_goals(request, pk, plan_id):
+    project = owned(request, pk, lock=True)
+    cycle = planning_cycle(project, today_for(request.user))
+    plan = get_object_or_404(cycle.plans.select_related("task"), pk=plan_id, task__status="open")
+    if plan.targets.count() >= 20:
+        raise ValidationError("A task can have up to 20 goals in a cycle.")
+    create_goal(plan, validate(inputs.GoalInput, request))
     return Response(plan_data(plan), status=201)
+
+
+@api_view(["PATCH", "DELETE"])
+@transaction.atomic
+def goal_detail(request, pk, goal_id):
+    project = owned(request, pk, lock=True)
+    active(project)
+    goal = get_object_or_404(Goal, task__project=project, pk=goal_id)
+    if goal.targets.filter(plan__cycle__closed_at__isnull=False).exists():
+        raise ValidationError("This goal is part of a closed cycle and is kept for reporting.")
+    if request.method == "DELETE":
+        goal.delete()
+        return Response(status=204)
+    require_hourly_project(project)
+    cycle = planning_cycle(project, today_for(request.user))
+    target = get_object_or_404(goal.targets, plan__cycle=cycle, plan__task__status="open")
+    if goal.kind != "count" or target.entries.exists():
+        raise ValidationError("Only a Count goal without daily entries can be converted to Hours worked.")
+    data = validate(inputs.HoursGoalInput, request)
+    goal.kind = "hours"
+    goal.metric = "hours worked"
+    goal.save(update_fields=["kind", "metric"])
+    target.quantity = data["quantity"]
+    target.save(update_fields=["quantity"])
+    return Response(plan_data(target.plan))
 
 
 @api_view(["GET"])
@@ -199,14 +280,20 @@ def plan_detail(request, pk, plan_id):
     cycle = planning_cycle(project, today_for(request.user))
     plan = get_object_or_404(cycle.plans, pk=plan_id, task__status="open")
     data = validate(inputs.PlanInput, request)
+    task_updates = {key: data[key] for key in ("name", "description", "reference_url") if key in data}
+    for key, value in task_updates.items():
+        setattr(plan.task, key, value)
+    if task_updates:
+        plan.task.save(update_fields=list(task_updates))
     if "priority" in data:
         plan.priority = data["priority"]
         plan.save(update_fields=["priority"])
     targets = {str(target.pk): target for target in plan.targets.select_related("goal")}
     for key, quantity in data.get("targets", {}).items():
         target = targets.get(key)
-        if target is None or (target.goal.kind == "done" and quantity > 1):
-            raise ValidationError({"targets": "Invalid target or quantity."})
+        if target is None:
+            raise ValidationError({"targets": "Invalid target."})
+        inputs.validate_quantity(target.goal.kind, quantity)
         if quantity == 0 and target.quantity != 0:
             raise ValidationError({"targets": "An active target needs a positive quantity."})
         target.quantity = quantity
@@ -231,6 +318,8 @@ def entry(request, pk, target_id, day):
         return Response({"day": parsed_day, "items": row.items if row else [],
                          "corrections": [fields_of(change, "previous revised reason created_at")
                                          for change in row.corrections.order_by("id")] if row else []})
+    if target.goal.kind in {"hours", "net_income"}:
+        raise ValidationError("This goal is calculated from the income ledger.")
     data = validate(inputs.EntryInput, request)
     items = clean_items(target.goal, data["items"])
     if cycle.closed_at or project.status == "closed":
@@ -345,6 +434,18 @@ def terms(request, pk):
                      for row in project.terms.order_by("-effective_on")])
 
 
+@api_view(["DELETE"])
+@transaction.atomic
+def terms_detail(request, pk, terms_id):
+    project = owned(request, pk, lock=True)
+    active(project)
+    row = get_object_or_404(project.terms, pk=terms_id)
+    if project.receivables.filter(terms=row).exists():
+        raise ValidationError("These pay terms are used by recorded work in the income ledger.")
+    row.delete()
+    return Response(status=204)
+
+
 @api_view(["GET"])
 def ledger(request, pk):
     project = owned(request, pk)
@@ -399,6 +500,30 @@ def monthly(request, pk):
     return Response(receivable_data(row), status=201)
 
 
+@api_view(["DELETE"])
+@transaction.atomic
+def receivable_detail(request, pk, receivable_id):
+    project = owned(request, pk, lock=True)
+    active(project)
+    row = get_object_or_404(project.receivables, pk=receivable_id)
+    if row.payments.exists():
+        raise ValidationError("Delete the recorded payments for this entry first.")
+    if project.cycles.filter(closed_at__isnull=False, start__lte=row.work_day, end__gte=row.work_day).exists():
+        raise ValidationError("This entry belongs to a closed cycle and is kept for reporting.")
+    if row.month and month_is_full(project, row.month) and last_of_month(row.month) <= today_for(request.user):
+        raise ValidationError("A full-month receivable is generated automatically and cannot be deleted.")
+    completed = Target.objects.select_related("goal", "plan__cycle").filter(
+        plan__cycle__project=project, plan__cycle__start__lte=row.work_day,
+        plan__cycle__end__gte=row.work_day, plan__task__status="completed",
+    ).filter(Q(goal__kind="net_income") | Q(goal__kind="hours", goal__task_id=row.task_id))
+    for target in completed:
+        contribution = row.net if target.goal.kind == "net_income" else row.hours or Decimal(0)
+        if contribution and target_actual(target) - contribution < target.quantity:
+            raise ValidationError("This entry is needed to meet a completed goal.")
+    row.delete()
+    return Response(status=204)
+
+
 @api_view(["POST"])
 @transaction.atomic
 def payments(request, pk, receivable_id):
@@ -413,6 +538,18 @@ def payments(request, pk, receivable_id):
         raise ValidationError({"amount": "The payment exceeds the remaining amount."})
     Payment.objects.create(receivable=row, **data)
     return Response(receivable_data(row), status=201)
+
+
+@api_view(["DELETE"])
+@transaction.atomic
+def payment_detail(request, pk, receivable_id, payment_id):
+    project = owned(request, pk, lock=True)
+    if project.status == "closed":
+        raise ValidationError("The project is already closed.")
+    row = get_object_or_404(project.receivables, pk=receivable_id)
+    payment = get_object_or_404(row.payments, pk=payment_id)
+    payment.delete()
+    return Response(status=204)
 
 
 @api_view(["GET"])

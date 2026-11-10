@@ -24,16 +24,20 @@ If updating an existing installation, run `python manage.py migrate` from the up
 
 1. Set the default review interval, timezone, and reminder time in **Preferences**. You can customize your reason list there.
 2. Create a project. Set the first review date explicitly if it needs to fall on a particular weekday. The review rule is fixed after project creation. Monthly rules use the day of the first review as the anchor and clamp to the last day of short months.
-3. Open **Task types** to define the task fields and the fields for each individual output. Use a consistent metric name across goals that represent the same count.
-4. Add a task and its goals. Open **Daily entry** under a goal and add each output. For a Done goal add a single output. Confirm task completion when all current targets are met.
+3. Click **Next** to add initial tasks and goals, or click **Create project** to add them later. A task can have just a name. Its description, reference, and reusable task type are optional. Open **Task types** when you want to define reusable task or output fields.
+4. Use **Add goal** to set a Done, Count, Hours worked, or Net income target. Open **Daily entry** to record each output for a Count goal or one output for a Done goal. Confirm task completion when all current targets are met.
 5. On the review date, decide what to complete, carry, close partially, or discard. Corrections to closed cycles require a reason and update cumulative progress. Change the current plan explicitly if needed.
 6. End the project after resolving each open task. The final report shows initial project targets separately from the cycle targets. Download PDF or Excel. The workbook includes project, metrics, goals, cycle history, receivable, and payment sheets.
 
-To remove a project, choose **Delete project** in its details and confirm. This permanently removes the project and its associated records.
+Delete a project, task, task type, goal, or pay terms using the corresponding **Delete** action and confirm. Deleting the entire project permanently removes its records. Individual deletions protect tasks and goals used in closed cycles, tasks linked to recorded work, task types in use, and pay terms used in the ledger.
 
 ## Finance and background processing
 
 Choose Hourly income or Monthly income at project creation and set effective-dated pay terms before recording work. The project currency applies to every amount. The entered tax percentage is an input to the calculation. Amounts are rounded to two decimal places.
+
+An **Hours worked** goal uses the hours recorded in the ledger for its task and cycle. Select the task when recording hourly work. To reuse linked work already in the ledger, choose **Switch to hours** on an open Count goal with no saved entries or closed-cycle history.
+
+A **Net income** goal compares the target with the project's after-tax receivables whose work dates fall in that cycle, including work without a linked task. It uses the project currency and updates from the income ledger. Each cycle can have one Net income goal.
 
 For monthly pay, schedule the initial terms on or before the project start. Later monthly rate or tax changes take effect on the first day of a month. Full-month receivables are generated on or after the last day of the month. Enter a partial first or final month manually as a gross amount. After work ends, unpaid projects remain in Awaiting payment. Once the last payment has been recorded, confirm closure from the project panel.
 

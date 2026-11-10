@@ -52,7 +52,15 @@ def next_cycle(previous):
                                 end=review_date(previous.project, sequence))
 
 
-def count_items(target):
+def target_actual(target):
+    kind = target.goal.kind
+    if kind in {"hours", "net_income"}:
+        cycle = target.plan.cycle
+        rows = Receivable.objects.filter(project_id=cycle.project_id, work_day__range=(cycle.start, cycle.end))
+        if kind == "hours":
+            rows = rows.filter(task_id=target.goal.task_id)
+        total = rows.aggregate(total=Sum("hours" if kind == "hours" else "net"))["total"]
+        return money(total or Decimal(0))
     total = 0
     for entry in target.entries.all():
         total += len(entry.items)
@@ -60,12 +68,9 @@ def count_items(target):
 
 
 def goals_met(task):
-    goals = list(task.goals.all())
-    if not goals:
-        return False
-    for goal in goals:
+    for goal in task.goals.all():
         targets = list(goal.targets.order_by("plan__cycle__sequence"))
-        if not targets or count_items(targets[-1]) < targets[-1].quantity:
+        if not targets or target_actual(targets[-1]) < targets[-1].quantity:
             return False
     return True
 
@@ -74,12 +79,12 @@ def carry_quantity(target):
     targets = list(target.goal.targets.filter(
         plan__cycle__sequence__lte=target.plan.cycle.sequence
     ).order_by("plan__cycle__sequence"))
-    previous_actual = sum(count_items(item) for item in targets[:-1])
+    previous_actual = sum(target_actual(item) for item in targets[:-1])
     cycle_baseline = targets[-1].quantity
     # A carry is its own cycle commitment. A completed earlier binary goal stays done.
     if target.goal.kind == "done" and previous_actual:
         return 0
-    return max(0, cycle_baseline - count_items(targets[-1]))
+    return max(0, cycle_baseline - target_actual(targets[-1]))
 
 
 def reason_for(user, reason_id):

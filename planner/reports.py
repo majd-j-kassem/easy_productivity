@@ -16,7 +16,7 @@ from rest_framework.response import Response
 
 from .api import owned
 from .presenters import receivable_data
-from .rules import count_items
+from .rules import target_actual
 
 
 def report_data(project):
@@ -26,7 +26,7 @@ def report_data(project):
     for task in tasks.order_by("id"):
         for goal in task.goals.all():
             targets = sorted(goal.targets.all(), key=lambda target: target.plan.cycle.sequence)
-            actuals = [count_items(target) for target in targets]
+            actuals = [target_actual(target) for target in targets]
             actual = min(sum(actuals), 1) if goal.kind == "done" else sum(actuals)
             original = targets[0].quantity
             reason = task.closed_reason if actual < original else ""
