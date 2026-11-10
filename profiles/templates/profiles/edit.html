@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block body %}
+<main class="workspace">
+  <p><a href="{% url 'dashboard' %}">Back to workspace</a></p>
+  <section class="card">
+    <h1>Professional profile</h1>
+    <p class="muted">Your profile is private.</p>
+    <form method="post">{% csrf_token %}{{ form.as_p }}
+      <button class="primary" type="submit">Save profile</button>
+    </form>
+    {% block profile_actions %}{% endblock %}
+  </section>
+</main>
+{% endblock %}
