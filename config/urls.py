@@ -2,13 +2,27 @@ from django.contrib import admin
 from django.contrib.auth import views as auth
 from django.urls import path
 
-from planner import api, reports, views
+from planner import api, registration, reports, views
 
 urlpatterns = [
     path("", views.dashboard, name="dashboard"),
     path("login/", auth.LoginView.as_view(template_name="auth.html",
                                           extra_context={"heading": "Sign in"}), name="login"),
     path("logout/", auth.LogoutView.as_view(), name="logout"),
+    path("register/", registration.register, name="register"),
+    path("verify-email/<int:user_id>/<str:token>/", registration.verify_email, name="verify_email"),
+    path("password-reset/", auth.PasswordResetView.as_view(
+        template_name="auth.html", email_template_name="password_reset_email.txt",
+        extra_context={"heading": "Reset password"}), name="password_reset"),
+    path("password-reset/sent/", auth.PasswordResetDoneView.as_view(
+        template_name="account_message.html",
+        extra_context={"heading": "Check your email", "message": "If the account exists, a reset link was sent."}),
+        name="password_reset_done"),
+    path("password-reset/<uidb64>/<token>/", auth.PasswordResetConfirmView.as_view(
+        template_name="auth.html", extra_context={"heading": "Choose a new password"}), name="password_reset_confirm"),
+    path("password-reset/complete/", auth.PasswordResetCompleteView.as_view(
+        template_name="account_message.html", extra_context={"heading": "Password updated",
+        "message": "You can now sign in with your new password."}), name="password_reset_complete"),
     path("signup/<uuid:token>/", views.signup, name="signup"),
     path("admin/", admin.site.urls),
     path("api/v1/preferences/", api.preferences),
