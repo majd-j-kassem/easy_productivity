@@ -14,9 +14,15 @@ def kind_data(kind):
 
 
 def cycle_data(cycle, today):
-    return fields_of(cycle, "id sequence start end closed_at") | {
-        "status": "closed" if cycle.closed_at else "review" if cycle.end <= today else "open",
-    }
+    if cycle.is_draft:
+        status = "draft"
+    elif cycle.closed_at:
+        status = "closed"
+    elif cycle.start > today:
+        status = "scheduled"
+    else:
+        status = "review" if cycle.end <= today else "open"
+    return fields_of(cycle, "id sequence start end closed_at is_draft") | {"status": status}
 
 
 def target_data(target):

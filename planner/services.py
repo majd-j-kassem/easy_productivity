@@ -4,7 +4,7 @@ from datetime import timedelta
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
-from .models import Cycle, Goal, Plan, Receivable, Target
+from .models import Cycle, DailyEntry, Notification, Plan, Target, Task
 from .rules import (add_months, build_receivable, carry_quantity, goals_met,
                     next_cycle, payable, reason_for)
 
@@ -44,7 +44,16 @@ def close_cycle(cycle, user, decisions):
     carried = apply_decisions(user, plans, decisions, allow_carry=True)
     cycle.closed_at = timezone.now()
     cycle.save(update_fields=["closed_at"])
-    new_cycle = next_cycle(cycle)
+    new_cycle = cycle.project.cycles.filter(sequence=cycle.sequence + 1, is_draft=True).first()
+    if new_cycle is None:
+        new_cycle = next_cycle(cycle)
+    else:
+        if new_cycle.plans.filter(targets__goal__kind="net_income").exists() and any(
+            plan.targets.filter(goal__kind="net_income").exists() for plan in carried
+        ):
+            raise ValidationError("Remove the draft Net income goal or choose a different decision for the current one.")
+        new_cycle.is_draft = False
+        new_cycle.save(update_fields=["is_draft"])
     for old in carried:
         plan = Plan.objects.create(cycle=new_cycle, task=old.task, priority=old.priority)
         Target.objects.bulk_create([
@@ -52,6 +61,60 @@ def close_cycle(cycle, user, decisions):
             for target in old.targets.select_related("goal", "plan__cycle")
         ])
     return new_cycle
+
+
+def change_cycle_dates(cycle, data):
+    if cycle.closed_at:
+        raise ValidationError("Closed cycle dates are kept for reporting.")
+    project = cycle.project
+    start = data.get("start", cycle.start)
+    end = data.get("end", cycle.end)
+    if (start, end) == (cycle.start, cycle.end):
+        return
+    if cycle.sequence > 1 and start != cycle.start:
+        raise ValidationError({"start": "This cycle starts the day after the previous cycle ends."})
+    if end < start:
+        raise ValidationError({"end": "The review date must be on or after the start."})
+    if cycle.sequence == 1 and project.planned_end and project.planned_end < start:
+        raise ValidationError({"start": "The start must be on or before the planned project end."})
+    if DailyEntry.objects.filter(target__plan__cycle=cycle).exclude(day__range=(start, end)).exists():
+        raise ValidationError("The new dates must include all daily entries in this cycle.")
+    work = project.receivables.filter(work_day__range=(cycle.start, cycle.end))
+    if not cycle.is_draft and work.exclude(work_day__range=(start, end)).exists():
+        raise ValidationError("The new dates must include recorded work in this cycle.")
+    if start != cycle.start and (
+        project.receivables.filter(payments__received_on__lt=start).exists()
+        or (project.mode == "monthly" and project.receivables.exists())
+    ):
+        raise ValidationError("The start date would conflict with the existing income ledger.")
+    shift = end - cycle.end
+    cycle.start, cycle.end = start, end
+    cycle.save(update_fields=["start", "end"])
+    if cycle.sequence == 1:
+        project.start, project.first_review = start, end
+        project.save(update_fields=["start", "first_review"])
+    if shift:
+        Notification.objects.filter(cycle=cycle).delete()
+        drafts = list(project.cycles.filter(sequence__gt=cycle.sequence, is_draft=True))
+        for draft in drafts:
+            draft.start += shift
+            draft.end += shift
+        Cycle.objects.bulk_update(drafts, ["start", "end"])
+
+
+def copy_plan_to_draft(source, cycle):
+    original = source.task
+    task = Task.objects.create(
+        project=cycle.project, kind=original.kind, name=original.name, description=original.description,
+        reference_url=original.reference_url, values=original.values,
+        task_fields=original.task_fields, entry_fields=original.entry_fields,
+    )
+    plan = Plan.objects.create(cycle=cycle, task=task, priority=source.priority)
+    for target in source.targets.select_related("goal"):
+        goal = target.goal
+        copied = task.goals.create(name=goal.name, metric=goal.metric, kind=goal.kind)
+        quantity = target.quantity or goal.targets.order_by("plan__cycle__sequence").first().quantity
+        Target.objects.create(plan=plan, goal=copied, quantity=quantity)
 
 
 def last_of_month(month):

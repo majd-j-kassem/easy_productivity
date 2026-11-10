@@ -316,3 +316,56 @@ def test_delete_ledger_payment_then_income_entry(account, django_user_model):
         needed = post(client, path + "ledger/hourly/", {"work_day": "2026-11-12", "hours": "3"})
         post(client, path + f"plans/{plan['id']}/complete/", {})
         assert client.delete(f"/api/v1/{path}ledger/{needed['id']}/").status_code == 400
+
+
+def test_cycle_drafts_shift_and_activate_one_at_a_time(account):
+    _, client = account
+    with patch("planner.api.today_for", return_value=date(2026, 11, 17)):
+        path = make_project(client)
+        url = f"/api/v1/{path}"
+        current = client.get(url).data["cycles"][0]
+        response = client.patch(url, {"cycle": {"start": "2026-11-08", "end": "2026-11-17"}}, format="json")
+        assert response.status_code == 200, response.data
+        assert response.data["start"].isoformat() == "2026-11-08"
+        plan = post(client, path + "tasks/", {
+            "name": "Practice", "goals": [{"name": "Solve exercises", "kind": "count", "quantity": 2}],
+        })
+        draft = post(client, path + "cycles/", {"source_plan_ids": [plan["id"]]})
+        later = post(client, path + "cycles/", {})
+        assert (draft["status"], later["status"]) == ("draft", "draft")
+        response = client.patch(url, {"cycle": {"end": "2026-11-16"}}, format="json")
+        assert response.status_code == 200, response.data
+        upcoming = client.get(url + f"cycles/{draft['id']}/").data
+        assert upcoming["start"] == date(2026, 11, 17)
+        copied = upcoming["plans"][0]
+        assert copied["name"] == plan["name"] and copied["task_id"] != plan["task_id"]
+        target_id = copied["targets"][0]["id"]
+        entry_url = url + f"targets/{target_id}/entries/2026-11-17/"
+        assert client.put(entry_url, {"items": [{}]}, format="json").status_code == 400
+        assert client.post(url + f"plans/{copied['id']}/complete/", {}, format="json").status_code == 404
+        assert client.post(url + f"cycles/{draft['id']}/review/", {}, format="json").status_code == 400
+
+        reason = post(client, "reasons/", {"label": "Continue next week"})
+        review = post(client, path + f"cycles/{current['id']}/review/", {
+            "decisions": {str(plan["id"]): {"action": "carry", "reason_id": reason["id"]}},
+        })
+        assert review["next"]["id"] == draft["id"]
+        assert client.get(url + f"cycles/{later['id']}/").data["status"] == "draft"
+        assert client.put(entry_url, {"items": [{}]}, format="json").status_code == 200
+        assert client.patch(url + f"cycles/{current['id']}/", {"end": "2026-11-17"}, format="json").status_code == 400
+
+
+def test_cycle_dates_keep_existing_daily_entries(account):
+    _, client = account
+    with patch("planner.api.today_for", return_value=date(2026, 11, 15)):
+        path = make_project(client)
+        plan = post(client, path + "tasks/", {
+            "name": "Practice", "goals": [{"name": "Solve exercises", "kind": "count", "quantity": 2}],
+        })
+        target_id = plan["targets"][0]["id"]
+        url = f"/api/v1/{path}"
+        assert client.put(url + f"targets/{target_id}/entries/2026-11-15/",
+                          {"items": [{}]}, format="json").status_code == 200
+        response = client.patch(url, {"cycle": {"end": "2026-11-14"}}, format="json")
+        assert response.status_code == 400
+        assert client.get(url).data["cycles"][0]["end"] == date(2026, 11, 15)
