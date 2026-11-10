@@ -177,3 +177,52 @@ def test_delete_project_removes_owned_records_only(account, django_user_model):
     assert client.get("/api/v1/" + other_project).status_code == 200
     assert Reason.objects.filter(pk=reason["id"]).exists()
     assert not any(model.objects.exists() for model in (DailyEntry, Correction, Receivable, Payment))
+
+
+def test_project_setup_is_atomic_and_task_type_is_optional(account):
+    _, client = account
+    request = {
+        "name": "New project", "start": "2026-11-09", "first_review": "2026-11-15",
+        "tasks": [
+            {"name": "Set up repository", "description": "Initialize Git",
+             "reference_url": "https://example.org/repository"},
+            {"name": "Work this week", "goals": [
+                {"name": "Paid work", "kind": "hours", "quantity": "25"},
+            ]},
+        ],
+    }
+    assert client.post("/api/v1/projects/", request, format="json").status_code == 400
+    assert client.get("/api/v1/projects/").data == []
+
+    project = post(client, "projects/", request | {"mode": "hourly"})
+    path = f"/api/v1/projects/{project['id']}/"
+    cycle = client.get(path).data["cycles"][0]
+    first, second = client.get(path + f"cycles/{cycle['id']}/").data["plans"]
+    assert first["kind"] == "" and first["targets"] == []
+    assert first["description"] == "Initialize Git"
+    assert first["reference_url"] == "https://example.org/repository"
+    assert second["targets"][0]["quantity"] == 25
+
+
+def test_convert_existing_goal_uses_linked_hours_and_protects_ledger(account):
+    _, client = account
+    with patch("planner.api.today_for", return_value=date(2026, 11, 15)):
+        path = make_project(client, mode="hourly")
+        plan = create_task(client, path)
+        used = post(client, path + "terms/", {"effective_on": "2026-11-09", "rate": "2000", "tax_pct": "0"})
+        post(client, path + "ledger/hourly/", {
+            "work_day": "2026-11-12", "hours": "12.50", "task_id": plan["task_id"],
+        })
+        post(client, path + "ledger/hourly/", {"work_day": "2026-11-12", "hours": "1"})
+        unused = post(client, path + "terms/", {"effective_on": "2026-11-13", "rate": "2100", "tax_pct": "0"})
+        goal_url = f"/api/v1/{path}goals/{plan['targets'][0]['goal_id']}/"
+        response = client.patch(goal_url, {"quantity": "25"}, format="json")
+        assert response.status_code == 200, response.data
+        goal = response.data["targets"][0]
+        assert goal["kind"] == "hours" and float(goal["actual"]) == 12.5 and goal["quantity"] == 25
+
+        assert client.delete(f"/api/v1/{path}terms/{used['id']}/").status_code == 400
+        assert client.delete(f"/api/v1/{path}terms/{unused['id']}/").status_code == 204
+        assert client.delete(f"/api/v1/{path}tasks/{plan['task_id']}/").status_code == 400
+        assert client.delete(goal_url).status_code == 204
+        assert len(client.get(f"/api/v1/{path}ledger/").data["items"]) == 2
