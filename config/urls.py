@@ -3,9 +3,12 @@ from django.contrib.auth import views as auth
 from django.urls import path
 
 from planner import api, reports, views
+from weekly.views import log_shift, weekly_view
 
 urlpatterns = [
     path("", views.dashboard, name="dashboard"),
+    path("week/", weekly_view, name="weekly_view"),
+    path("week/shifts/<int:item_id>/log/", log_shift, name="log_shift"),
     path("login/", auth.LoginView.as_view(template_name="auth.html",
                                           extra_context={"heading": "Sign in"}), name="login"),
     path("logout/", auth.LogoutView.as_view(), name="logout"),
