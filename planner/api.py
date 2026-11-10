@@ -13,9 +13,9 @@ from .models import (Correction, Cycle, DailyEntry, Goal, Notification, PayTerms
                      Plan, Project, Reason, Target, Task, TaskKind)
 from .presenters import cycle_data, fields_of, kind_data, plan_data, project_data, receivable_data
 from .rules import (balance, build_receivable, clean_items, clean_values, default_first_review,
-                    paid, payable, profile_for, target_actual, today_for)
-from .services import (apply_decisions, close_cycle, generate_months, last_of_month,
-                       missing_months, month_is_full)
+                    next_cycle, paid, payable, profile_for, target_actual, today_for)
+from .services import (apply_decisions, change_cycle_dates, close_cycle, copy_plan_to_draft,
+                       generate_months, last_of_month, missing_months, month_is_full)
 
 
 def validate(serializer, request):
@@ -35,7 +35,7 @@ def active(project):
 
 
 def open_cycle(project):
-    return get_object_or_404(project.cycles, closed_at__isnull=True)
+    return get_object_or_404(project.cycles, closed_at__isnull=True, is_draft=False)
 
 
 def planning_cycle(project, today):
@@ -107,7 +107,7 @@ def projects(request):
     today = today_for(request.user)
     return Response([
         project_data(row) | {"review_due": any(
-            not cycle.closed_at and cycle.end <= today for cycle in row.cycles.all()
+            not cycle.closed_at and not cycle.is_draft and cycle.end <= today for cycle in row.cycles.all()
         ) and row.status == "active"}
         for row in rows.distinct().prefetch_related("cycles")
     ])
@@ -123,14 +123,19 @@ def project_detail(request, pk):
     today = today_for(request.user)
     if request.method == "PATCH":
         active(project)
-        unknown = set(request.data) - {"name", "planned_end"}
+        unknown = set(request.data) - {"name", "planned_end", "cycle"}
         if unknown:
             raise ValidationError({key: "This field cannot be changed after creation." for key in unknown})
         data = validate(inputs.ProjectEdit, request)
-        if data.get("planned_end") and data["planned_end"] < project.start:
-            raise ValidationError({"planned_end": "The end must be on or after the start."})
+        dates = data.pop("cycle", None)
         for key, value in data.items():
             setattr(project, key, value)
+        if dates:
+            cycle = open_cycle(project)
+            cycle.project = project
+            change_cycle_dates(cycle, dates)
+        if project.planned_end and project.planned_end < project.start:
+            raise ValidationError({"planned_end": "The end must be on or after the start."})
         if data:
             project.save(update_fields=list(data))
     return Response(project_data(project) | {
@@ -202,9 +207,12 @@ def create_task(project, cycle, data):
 
 @api_view(["POST"])
 @transaction.atomic
-def tasks(request, pk):
+def tasks(request, pk, cycle_id=None):
     project = owned(request, pk, lock=True)
-    cycle = planning_cycle(project, today_for(request.user))
+    active(project)
+    cycle = get_object_or_404(project.cycles, pk=cycle_id, is_draft=True) if cycle_id else planning_cycle(
+        project, today_for(request.user),
+    )
     return Response(plan_data(create_task(project, cycle, validate(inputs.TaskInput, request))), status=201)
 
 
@@ -222,12 +230,20 @@ def task_detail(request, pk, task_id):
     return Response(status=204)
 
 
+def editable_plan(project, plan_id, today):
+    active(project)
+    plan = get_object_or_404(Plan.objects.select_related("task", "cycle"),
+                             pk=plan_id, cycle__project=project, task__status="open")
+    if not plan.cycle.is_draft and plan.cycle.pk != planning_cycle(project, today).pk:
+        raise ValidationError("Only the current or a draft cycle can be planned.")
+    return plan
+
+
 @api_view(["POST"])
 @transaction.atomic
 def plan_goals(request, pk, plan_id):
     project = owned(request, pk, lock=True)
-    cycle = planning_cycle(project, today_for(request.user))
-    plan = get_object_or_404(cycle.plans.select_related("task"), pk=plan_id, task__status="open")
+    plan = editable_plan(project, plan_id, today_for(request.user))
     if plan.targets.count() >= 20:
         raise ValidationError("A task can have up to 20 goals in a cycle.")
     create_goal(plan, validate(inputs.GoalInput, request))
@@ -259,10 +275,31 @@ def goal_detail(request, pk, goal_id):
     return Response(plan_data(target.plan))
 
 
-@api_view(["GET"])
+@api_view(["POST"])
+@transaction.atomic
+def draft_cycles(request, pk):
+    project = owned(request, pk, lock=True)
+    active(project)
+    data = validate(inputs.CycleDraftInput, request)
+    previous = project.cycles.latest("sequence")
+    ids = set(data["source_plan_ids"])
+    sources = list(previous.plans.filter(pk__in=ids).select_related("task"))
+    if len(sources) != len(ids):
+        raise ValidationError("Select tasks from the immediately preceding cycle.")
+    cycle = next_cycle(previous, is_draft=True)
+    for source in sources:
+        copy_plan_to_draft(source, cycle)
+    return Response(cycle_data(cycle, today_for(request.user)), status=201)
+
+
+@api_view(["GET", "PATCH"])
+@transaction.atomic
 def cycle_detail(request, pk, cycle_id):
-    project = owned(request, pk)
+    project = owned(request, pk, lock=request.method == "PATCH")
     cycle = get_object_or_404(project.cycles, pk=cycle_id)
+    if request.method == "PATCH":
+        active(project)
+        change_cycle_dates(cycle, validate(inputs.CycleDatesInput, request))
     rows = cycle.plans.select_related("task__kind")
     if request.query_params.get("status"):
         rows = rows.filter(task__status=request.query_params["status"])
@@ -277,8 +314,7 @@ def cycle_detail(request, pk, cycle_id):
 @transaction.atomic
 def plan_detail(request, pk, plan_id):
     project = owned(request, pk, lock=True)
-    cycle = planning_cycle(project, today_for(request.user))
-    plan = get_object_or_404(cycle.plans, pk=plan_id, task__status="open")
+    plan = editable_plan(project, plan_id, today_for(request.user))
     data = validate(inputs.PlanInput, request)
     task_updates = {key: data[key] for key in ("name", "description", "reference_url") if key in data}
     for key, value in task_updates.items():
@@ -309,6 +345,8 @@ def entry(request, pk, target_id, day):
                                plan__cycle__project=project, pk=target_id)
     parsed_day = inputs.s.DateField().run_validation(day)
     cycle = target.plan.cycle
+    if cycle.is_draft:
+        raise ValidationError("Close the current cycle before recording progress in this draft.")
     if not cycle.start <= parsed_day <= cycle.end:
         raise ValidationError({"day": "Use a date within the selected cycle."})
     if parsed_day > today_for(request.user):
@@ -345,7 +383,7 @@ def entry(request, pk, target_id, day):
 @api_view(["GET"])
 def entry_dates(request, pk, target_id):
     project = owned(request, pk)
-    target = get_object_or_404(Target, plan__cycle__project=project, pk=target_id)
+    target = get_object_or_404(Target, plan__cycle__project=project, plan__cycle__is_draft=False, pk=target_id)
     return Response(list(target.entries.order_by("day").values_list("day", flat=True)))
 
 
@@ -355,6 +393,8 @@ def complete_plan(request, pk, plan_id):
     project = owned(request, pk, lock=True)
     active(project)
     cycle = open_cycle(project)
+    if cycle.start > today_for(request.user):
+        raise ValidationError("This cycle has not started.")
     plan = get_object_or_404(cycle.plans.select_related("task"), pk=plan_id)
     if plan.task.status == "completed":
         return Response(plan_data(plan))
@@ -373,6 +413,8 @@ def review(request, pk, cycle_id):
     today = today_for(request.user)
     if cycle.closed_at:
         return Response({"closed": cycle.pk, "already_closed": True})
+    if cycle.is_draft:
+        raise ValidationError("Close the current cycle before reviewing this draft.")
     if cycle.end > today:
         raise ValidationError("Review opens on the scheduled review date.")
     data = validate(inputs.ReviewInput, request)
@@ -471,7 +513,7 @@ def hourly(request, pk):
         raise ValidationError({"work_day": "Use a past or present work date on or after the project start."})
     task = None
     if "task_id" in data:
-        task = get_object_or_404(project.tasks, pk=data["task_id"])
+        task = get_object_or_404(project.tasks.filter(plans__cycle__is_draft=False).distinct(), pk=data["task_id"])
     terms_row = payable(project, data["work_day"])
     row = build_receivable(project, data["work_day"], terms_row, gross=data["hours"] * terms_row.rate,
                            hours=data["hours"], location=data["location"], task=task)

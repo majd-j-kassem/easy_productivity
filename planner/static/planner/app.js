@@ -114,7 +114,9 @@ async function reload() {
   const path = projectPath(selected);
   const project = await api(path);
   if (token !== renderToken) return;
-  const chosen = project.cycles.find(row => row.id === selectedCycle) ?? project.cycles[0];
+  const chosen = project.cycles.find(row => row.id === selectedCycle) ??
+    project.cycles.find(row => !row.closed_at && !row.is_draft) ??
+    project.cycles.find(row => !row.is_draft);
   const results = await Promise.all([
     chosen ? api(`${path}cycles/${chosen.id}/`) : null,
     project.mode === "standard" ? null : api(path + "ledger/"),
@@ -126,7 +128,7 @@ async function reload() {
 function goalValue(value, kind, currency) {
   return kind === "net_income" ? `${Number(value).toLocaleString("en")} ${escape(currency)}` : value;
 }
-function goalCard(goal, canChange, project) {
+function goalCard(goal, canChange, project, cycle) {
   const progress = goal.quantity ? Math.min(100, Math.round(goal.actual * 100 / goal.quantity)) : 100;
   const counter = goal.kind === "done" ? (goal.actual || goal.previous_actual ? "Done" : "Pending")
     : `${goalValue(goal.actual, goal.kind, project.currency)} / ${goalValue(goal.quantity, goal.kind, project.currency)}${goal.kind === "hours" ? " h" : ""}`;
@@ -139,8 +141,9 @@ function goalCard(goal, canChange, project) {
     <small>${goalValue(goal.cumulative, goal.kind, project.currency)} cumulative ·
       ${goalValue(goal.remaining_original, goal.kind, project.currency)} remaining against original target</small>
     <div class="actions">${ledgerNote ? `<small>${ledgerNote}</small>`
+      : cycle.is_draft || cycle.status === "scheduled" ? ""
       : button("Daily entry", "entry", "", `data-target="${goal.id}" data-testid="daily-entry"`)}
-    ${canChange && project.mode === "hourly" && goal.kind === "count" && !goal.actual && !goal.previous_actual
+    ${canChange && !cycle.is_draft && project.mode === "hourly" && goal.kind === "count" && !goal.actual && !goal.previous_actual
       ? button("Switch to hours", "goal-hours", "", `data-target="${goal.id}"`) : ""}
     ${canChange ? button("Delete goal", "delete-goal", "danger-outline", `data-target="${goal.id}"`) : ""}</div></div>`;
 }
@@ -151,12 +154,19 @@ function renderProject(project, cycle, ledger, report) {
     <a class="button" href="${root + path}report.pdf">Download PDF</a><a class="button" href="${root + path}report.xlsx">Download Excel</a>
     </div></div>${table(["Task", "Goal", "Planned", "Actual", "Gap", "Reason"],
       report.goals.map(row => [row.task, row.goal, row.planned, row.actual, row.gap, row.reason]))}</article>` : "";
-  const currentCycle = project.cycles.find(row => !row.closed_at);
+  const currentCycle = project.cycles.find(row => !row.closed_at && !row.is_draft);
+  const cycleList = `<article class="card"><div class="line"><h2>Project cycles</h2>
+    ${isOpen ? button("Plan next cycle", "draft-cycle", "primary") : ""}</div>
+    <ul class="ledger-list">${project.cycles.map(item => `<li class="line">
+      ${button(`Cycle ${item.sequence} · ${item.start} to ${item.end}`, "view-cycle",
+        item.id === cycle?.id ? "primary" : "", `data-cycle="${item.id}"`)}
+      <span class="pill">${escape(label(item.status))}</span></li>`).join("")}</ul></article>`;
   const cycleSection = cycle ? `<article class="card"><div class="line"><h2>Cycle ${cycle.sequence}</h2><span class="pill">${escape(label(cycle.status))}</span></div>
     <div class="cycle-toolbar"><p>${cycle.start} to ${cycle.end}</p>
-    ${select("View cycle", "cycle", project.cycles.map(item => [item.id, `Cycle ${item.sequence} · ${item.end}`]), cycle.id)}
     ${select("Filter tasks", "local-status", taskStatuses)}</div>
-    <div class="actions">${isOpen && !cycle.closed_at ? button("Add task", "task", "primary", 'data-testid="add-task"') : ""}
+    ${cycle.is_draft ? '<p class="muted">You can plan this cycle now. Progress opens after the previous cycle closes and the start date arrives.</p>' : ""}
+    <div class="actions">${isOpen && !cycle.closed_at
+      ? button("Edit cycle dates", "edit-cycle") + button("Add task", "task", "primary", 'data-testid="add-task"') : ""}
     ${cycle.status === "review" && isOpen ? button("Review and close cycle", "review", "primary", 'data-testid="review-cycle"') : ""}</div>
     <div id="plans">${cycle.plans.map(plan => `<section class="task" data-status="${escape(plan.status)}">
       <div class="line"><div><h3>${escape(plan.name)}</h3><small>${plan.kind ? `${escape(plan.kind)} · ` : ""}${escape(plan.priority)} priority</small></div>
@@ -166,12 +176,13 @@ function renderProject(project, cycle, ledger, report) {
       ${plan.reference_url ? `<p class="muted">Reference · ${escape(plan.reference_url)}</p>` : ""}
       ${Object.keys(plan.values).length ? `<dl class="values">${Object.entries(plan.values).map(([key, value]) =>
         `<div><dt>${escape(label(key))}</dt><dd>${escape(value)}</dd></div>`).join("")}</dl>` : ""}
-      ${plan.targets.map(goal => goalCard(goal, !cycle.closed_at && isOpen && plan.status === "open", project)).join("")}
+      ${plan.targets.map(goal => goalCard(goal, !cycle.closed_at && isOpen && plan.status === "open", project, cycle)).join("")}
       <div class="actions">
       ${!cycle.closed_at && isOpen && plan.status === "open"
         ? button("Edit plan", "plan", "", `data-plan="${plan.id}"`) +
           button("Add goal", "goal", "", `data-plan="${plan.id}"`) : ""}
-      ${!cycle.closed_at && isOpen && plan.status === "open" && plan.targets.every(goal => goal.actual >= goal.quantity)
+      ${!cycle.closed_at && !cycle.is_draft && cycle.status !== "scheduled" && isOpen &&
+        plan.status === "open" && plan.targets.every(goal => goal.actual >= goal.quantity)
         ? button("Confirm complete", "complete", "", `data-plan="${plan.id}"`) : ""}
       ${!cycle.closed_at && isOpen
         ? button("Delete task", "delete-task", "danger-outline", `data-plan="${plan.id}"`) : ""}</div></section>`).join("") ||
@@ -186,11 +197,7 @@ function renderProject(project, cycle, ledger, report) {
     <div class="actions">${isOpen ? button("Edit project", "edit-project") + button("Task types", "kinds") : ""}
     ${project.status !== "closed" ? button(project.status === "awaiting_payment" ? "Confirm closure" : "End project", "finish") : ""}
     ${button("Delete project", "delete-project", "danger-outline", 'data-testid="delete-project"')}</div>
-    </article>${reportSection}${cycleSection}${ledger ? ledgerHtml(project, ledger) : ""}`;
-  detail.querySelector("[name=cycle]")?.addEventListener("change", safe(async event => {
-    selectedCycle = Number(event.target.value);
-    await reload();
-  }));
+    </article>${cycleList}${reportSection}${cycleSection}${ledger ? ledgerHtml(project, ledger) : ""}`;
   detail.querySelector("[name=local-status]")?.addEventListener("change", event => {
     detail.querySelectorAll("[data-status]").forEach(item => {
       item.hidden = Boolean(event.target.value && item.dataset.status !== event.target.value);
@@ -200,7 +207,13 @@ function renderProject(project, cycle, ledger, report) {
   const findGoal = element => cycle.plans.flatMap(plan => plan.targets)
     .find(goal => goal.id === Number(element.dataset.target));
   const actions = {
-    "edit-project": () => projectForm(project), kinds: () => kindPicker(project),
+    "edit-project": () => projectForm(project, currentCycle), kinds: () => kindPicker(project),
+    "edit-cycle": () => cycleDatesForm(project, cycle),
+    "draft-cycle": () => draftCycleForm(project),
+    "view-cycle": async element => {
+      selectedCycle = Number(element.dataset.cycle);
+      await reload();
+    },
     "delete-project": () => modalForm("Delete project?", `<p>Permanently delete <strong>${escape(project.name)}</strong>
       and its tasks, progress, and financial records? This action cannot be undone.</p>`, async () => {
       await api(path, "DELETE");
@@ -210,7 +223,7 @@ function renderProject(project, cycle, ledger, report) {
       message(`Deleted project: ${project.name}`);
       await safe(reload)();
     }, "Delete project", "danger"),
-    task: () => taskForm(project), review: () => reviewForm(project, cycle),
+    task: () => taskForm(project, cycle), review: () => reviewForm(project, cycle),
     finish: async () => reviewForm(project, currentCycle ? await api(`${path}cycles/${currentCycle.id}/`) : null, true),
     complete: element => modalForm("Confirm task completion", "<p>This closes the task for new daily entries.</p>", async () => {
       await api(path + `plans/${element.dataset.plan}/complete/`, "POST", {});
@@ -234,7 +247,8 @@ function renderProject(project, cycle, ledger, report) {
       const plan = cycle.plans.find(row => row.targets.some(target => target.id === id));
       return entryForm(project, cycle, plan, plan.targets.find(target => target.id === id));
     },
-    terms: () => termsForm(project), hourly: () => hourlyForm(project, cycle),
+    terms: () => termsForm(project), hourly: async () => hourlyForm(project, cycle?.is_draft && currentCycle
+      ? await api(`${path}cycles/${currentCycle.id}/`) : cycle),
     monthly: () => monthlyForm(project),
     payment: element => paymentForm(project, ledger.items.find(item => item.id === Number(element.dataset.receivable))),
     "delete-receivable": element => {
@@ -266,13 +280,42 @@ function confirmDelete(noun, name, path, impact = "") {
       await safe(reload)();
     }, `Delete ${noun}`, "danger");
 }
-async function projectForm(project = null) {
+function cycleDateFields(cycle) {
+  return `<div class="form-grid">
+    ${input("Start date", "start", cycle.start, "date", cycle.sequence === 1 ? "" : "disabled")}
+    ${input("Review date", "end", cycle.end, "date")}</div>`;
+}
+function cycleDatesForm(project, cycle) {
+  return modalForm(`Edit cycle ${cycle.sequence} dates`, cycleDateFields(cycle), async data => {
+    await api(projectPath(project.id) + `cycles/${cycle.id}/`, "PATCH", data);
+    await safe(reload)();
+  });
+}
+async function draftCycleForm(project) {
+  const path = projectPath(project.id) + "cycles/";
+  const previous = await api(path + `${project.cycles[0].id}/`);
+  const suggestions = previous.plans.map(plan => `<label class="check">
+    <input type="checkbox" name="source_plan_ids" value="${plan.id}">${escape(plan.name)}</label>`).join("");
+  modalForm("Plan next cycle", `<p>Create a draft after cycle ${previous.sequence}. Select tasks to copy as new work.</p>
+    ${suggestions ? `<fieldset><legend>Suggested tasks from the previous plan</legend>${suggestions}</fieldset>` : ""}
+    <p class="muted">If you want to continue an unfinished task, choose Carry forward when reviewing its cycle.</p>`,
+  async (_, form) => {
+    const source_plan_ids = new FormData(form).getAll("source_plan_ids").map(Number);
+    const draft = await api(path, "POST", {source_plan_ids});
+    selectedCycle = draft.id;
+    await safe(reload)();
+  }, "Create draft");
+}
+async function projectForm(project = null, cycle = null) {
   if (project) {
     return modalForm("Edit project", `<div class="form-grid">
       ${input("Project name", "name", project.name)}
-      ${input("Planned end (optional)", "planned_end", project.planned_end, "date")}</div>`, async data => {
-      await api(projectPath(project.id), "PATCH", {...data, planned_end: data.planned_end || null});
-      await reload();
+      ${input("Planned end (optional)", "planned_end", project.planned_end, "date")}</div>
+      ${cycle ? `<fieldset><legend>Current cycle dates</legend>${cycleDateFields(cycle)}</fieldset>` : ""}`,
+    async ({name, planned_end, ...dates}) => {
+      await api(projectPath(project.id), "PATCH", {name, planned_end: planned_end || null,
+        ...(cycle ? {cycle: dates} : {})});
+      await safe(reload)();
     });
   }
   const pref = await api("preferences/");
@@ -506,10 +549,11 @@ function taskEditor(project, remove) {
       values: fieldValues(editor.querySelector("[data-values]")), goals: goals.map(goal => goal.read())};
   }};
 }
-function taskForm(project) {
+function taskForm(project, cycle) {
   const editor = taskEditor(project);
   const form = modalForm("New task", '<div data-editor></div>', async () => {
-    await api(projectPath(project.id) + "tasks/", "POST", editor.read());
+    const path = cycle.is_draft ? `cycles/${cycle.id}/tasks/` : "tasks/";
+    await api(projectPath(project.id) + path, "POST", editor.read());
     await safe(reload)();
   });
   form.querySelector("[data-editor]").append(editor.element);

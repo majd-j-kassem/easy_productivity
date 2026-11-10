@@ -61,11 +61,12 @@ class Cycle(models.Model):
     start = models.DateField()
     end = models.DateField()
     closed_at = models.DateTimeField(null=True)
+    is_draft = models.BooleanField(default=False)
 
     class Meta:
         constraints = [
             models.UniqueConstraint(fields=["project", "sequence"], name="unique_cycle_sequence"),
-            models.UniqueConstraint(fields=["project"], condition=models.Q(closed_at__isnull=True),
+            models.UniqueConstraint(fields=["project"], condition=models.Q(closed_at__isnull=True, is_draft=False),
                                     name="one_open_cycle"),
         ]
 

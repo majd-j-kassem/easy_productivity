@@ -45,14 +45,19 @@ def default_first_review(start, interval, unit):
     return start + timedelta(days=interval * (7 if unit == "weeks" else 1) - 1)
 
 
-def next_cycle(previous):
+def next_cycle(previous, *, is_draft=False):
+    project = previous.project
     sequence = previous.sequence + 1
-    return Cycle.objects.create(project=previous.project, sequence=sequence,
+    offset = previous.end - review_date(project, previous.sequence)
+    return Cycle.objects.create(project=project, sequence=sequence,
                                 start=previous.end + timedelta(days=1),
-                                end=review_date(previous.project, sequence))
+                                end=review_date(project, sequence) + offset,
+                                is_draft=is_draft)
 
 
 def target_actual(target):
+    if target.plan.cycle.is_draft:
+        return 0
     kind = target.goal.kind
     if kind in {"hours", "net_income"}:
         cycle = target.plan.cycle

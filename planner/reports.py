@@ -22,7 +22,9 @@ from .rules import target_actual
 def report_data(project):
     summary = defaultdict(lambda: {"planned": 0, "actual": 0})
     goals, cycles = [], []
-    tasks = project.tasks.prefetch_related("goals__targets__entries", "goals__targets__plan__cycle")
+    tasks = project.tasks.filter(plans__cycle__is_draft=False).distinct().prefetch_related(
+        "goals__targets__entries", "goals__targets__plan__cycle",
+    )
     for task in tasks.order_by("id"):
         for goal in task.goals.all():
             targets = sorted(goal.targets.all(), key=lambda target: target.plan.cycle.sequence)
