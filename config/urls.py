@@ -15,6 +15,7 @@ urlpatterns = [
     path("api/v1/reasons/", api.reasons),
     path("api/v1/reasons/<int:pk>/", api.reason_detail),
     path("api/v1/projects/", api.projects),
+    path("api/v1/project-templates/", api.project_templates),
     path("api/v1/projects/<int:pk>/", api.project_detail),
     path("api/v1/projects/<int:pk>/kinds/", api.kinds),
     path("api/v1/projects/<int:pk>/kinds/<int:kind_id>/", api.kind_detail),
