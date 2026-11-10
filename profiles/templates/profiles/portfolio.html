@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block body %}
+<main class="workspace">
+  <p><a href="{% url 'edit_profile' %}">Back to profile</a></p>
+  <section class="card">
+    <h1>Project portfolio</h1>
+    <p>Preview a closed project before publishing it to your shared profile. Review the goal names and evidence links.</p>
+    {% for project in projects %}
+      <form method="post" class="task">{% csrf_token %}
+        <input type="hidden" name="project_id" value="{{ project.pk }}">
+        <p><strong>{{ project.name }}</strong>{% if project.pk in published %} · Published{% endif %}</p>
+        <button name="action" value="preview">Preview project</button>
+        {% if project.pk in published %}<button name="action" value="unpublish">Unpublish</button>{% endif %}
+      </form>
+    {% empty %}<p>Close a project to make it available here.</p>{% endfor %}
+    {% if preview %}
+      <h2>Company view preview</h2>
+      {% include "profiles/project_card.html" with project=preview %}
+      <form method="post">{% csrf_token %}
+        <input type="hidden" name="project_id" value="{{ preview.project_id }}">
+        <button class="primary" name="action" value="publish">Publish this project</button>
+      </form>
+    {% endif %}
+  </section>
+</main>
+{% endblock %}
