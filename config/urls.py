@@ -1,0 +1,39 @@
+from django.contrib import admin
+from django.contrib.auth import views as auth
+from django.urls import path
+
+from planner import api, reports, views
+
+urlpatterns = [
+    path("", views.dashboard, name="dashboard"),
+    path("login/", auth.LoginView.as_view(template_name="auth.html",
+                                          extra_context={"heading": "Sign in"}), name="login"),
+    path("logout/", auth.LogoutView.as_view(), name="logout"),
+    path("signup/<uuid:token>/", views.signup, name="signup"),
+    path("admin/", admin.site.urls),
+    path("api/v1/preferences/", api.preferences),
+    path("api/v1/reasons/", api.reasons),
+    path("api/v1/reasons/<int:pk>/", api.reason_detail),
+    path("api/v1/projects/", api.projects),
+    path("api/v1/projects/<int:pk>/", api.project_detail),
+    path("api/v1/projects/<int:pk>/kinds/", api.kinds),
+    path("api/v1/projects/<int:pk>/kinds/<int:kind_id>/", api.kind_detail),
+    path("api/v1/projects/<int:pk>/tasks/", api.tasks),
+    path("api/v1/projects/<int:pk>/cycles/<int:cycle_id>/", api.cycle_detail),
+    path("api/v1/projects/<int:pk>/cycles/<int:cycle_id>/review/", api.review),
+    path("api/v1/projects/<int:pk>/plans/<int:plan_id>/", api.plan_detail),
+    path("api/v1/projects/<int:pk>/plans/<int:plan_id>/complete/", api.complete_plan),
+    path("api/v1/projects/<int:pk>/targets/<int:target_id>/entries/", api.entry_dates),
+    path("api/v1/projects/<int:pk>/targets/<int:target_id>/entries/<str:day>/", api.entry),
+    path("api/v1/projects/<int:pk>/finish/", api.finish),
+    path("api/v1/projects/<int:pk>/terms/", api.terms),
+    path("api/v1/projects/<int:pk>/ledger/", api.ledger),
+    path("api/v1/projects/<int:pk>/ledger/hourly/", api.hourly),
+    path("api/v1/projects/<int:pk>/ledger/monthly/", api.monthly),
+    path("api/v1/projects/<int:pk>/ledger/<int:receivable_id>/payments/", api.payments),
+    path("api/v1/projects/<int:pk>/report/", reports.report),
+    path("api/v1/projects/<int:pk>/report.xlsx", reports.report, {"file_type": "xlsx"}),
+    path("api/v1/projects/<int:pk>/report.pdf", reports.report, {"file_type": "pdf"}),
+    path("api/v1/notifications/", api.notifications),
+    path("api/v1/notifications/<int:pk>/read/", api.notification_read),
+]

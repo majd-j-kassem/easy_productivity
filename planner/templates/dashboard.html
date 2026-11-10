@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% load static i18n %}
+{% block body %}
+<header class="masthead">
+  <a href="/" class="brand"><span class="brand-mark" aria-hidden="true">P</span> {% translate "Productivity Studio" %}</a>
+  <nav aria-label="Account">
+    <button id="notifications" type="button">{% translate "Notifications" %}</button>
+    <button id="preferences" type="button">{% translate "Preferences" %}</button>
+    <form method="post" action="{% url 'logout' %}" novalidate>
+      {% csrf_token %}<button type="submit">{% translate "Sign out" %}</button>
+    </form>
+  </nav>
+</header>
+<main class="workspace">
+  <header class="hero">
+    <div><p class="eyebrow">{% translate "Personal workspace" %}</p>
+    <h1>{% translate "Project dashboard" %}</h1>
+    <p>{% translate "Plan your outcomes, record progress, and review each cycle." %}</p></div>
+    <button class="primary" id="new-project" data-testid="new-project">{% translate "New project" %}</button>
+  </header>
+  <p id="notice" role="status" hidden></p>
+  <div class="layout">
+    <aside class="card project-list">
+      <h2>{% translate "Projects" %}</h2>
+      <form id="filters" class="filters" novalidate>
+        <label>{% translate "Search projects or tasks" %}<input name="q" type="search" placeholder="Search"></label>
+        <label>{% translate "Project status" %}<select name="status"><option value="">All</option><option value="active">Active</option><option value="awaiting_payment">Awaiting payment</option><option value="closed">Closed</option></select></label>
+        <label>{% translate "Task status" %}<select name="task_status"><option value="">All</option><option value="open">Open</option><option value="completed">Completed</option><option value="partial">Partial</option><option value="discarded">Discarded</option></select></label>
+      </form>
+      <div id="projects" aria-live="polite"></div>
+    </aside>
+    <section id="detail" class="detail" aria-label="Project details"></section>
+  </div>
+</main>
+<dialog id="modal" aria-labelledby="modal-title"><div id="modal-content"></div></dialog>
+<script type="module" src="{% static 'planner/app.js' %}"></script>
+{% endblock %}
