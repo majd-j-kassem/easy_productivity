@@ -13,6 +13,7 @@ urlpatterns = [
     path("verify-email/<int:user_id>/<str:token>/", registration.verify_email, name="verify_email"),
     path("password-reset/", auth.PasswordResetView.as_view(
         template_name="auth.html", email_template_name="password_reset_email.txt",
+        subject_template_name="password_reset_subject.txt",
         extra_context={"heading": "Reset password"}), name="password_reset"),
     path("password-reset/sent/", auth.PasswordResetDoneView.as_view(
         template_name="account_message.html",
