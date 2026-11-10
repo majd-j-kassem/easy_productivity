@@ -1,6 +1,7 @@
 from calendar import monthrange
 from datetime import timedelta
 
+from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
@@ -156,3 +157,19 @@ def missing_months(project, through):
             missing.append(month.strftime("%Y-%m"))
         month = add_months(month, 1)
     return missing
+
+
+def record_hourly_work(project, today, data):
+    if project.status != "active":
+        raise ValidationError("This action requires an active project.")
+    if project.mode != "hourly":
+        raise ValidationError("This project does not use hourly pay.")
+    day = data["work_day"]
+    if not project.start <= day <= today:
+        raise ValidationError({"work_day": "Use a past or present work date on or after the project start."})
+    task = None
+    if "task_id" in data:
+        task = get_object_or_404(project.tasks.filter(plans__cycle__is_draft=False).distinct(), pk=data["task_id"])
+    terms = payable(project, day)
+    return build_receivable(project, day, terms, gross=data["hours"] * terms.rate,
+                            hours=data["hours"], location=data["location"], task=task)
