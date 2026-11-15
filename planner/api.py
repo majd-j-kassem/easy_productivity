@@ -15,7 +15,7 @@ from .presenters import cycle_data, fields_of, kind_data, plan_data, project_dat
 from .rules import (balance, build_receivable, clean_items, clean_values, default_first_review,
                     next_cycle, paid, payable, profile_for, target_actual, today_for)
 from .services import (apply_decisions, change_cycle_dates, close_cycle, copy_plan_to_draft,
-                       generate_months, last_of_month, missing_months, month_is_full)
+                       generate_months, last_of_month, missing_months, month_is_full, record_hourly_work)
 
 
 def validate(serializer, request):
@@ -505,18 +505,8 @@ def ledger(request, pk):
 @transaction.atomic
 def hourly(request, pk):
     project = owned(request, pk, lock=True)
-    active(project)
-    if project.mode != "hourly":
-        raise ValidationError("This project does not use hourly pay.")
     data = validate(inputs.HoursInput, request)
-    if not project.start <= data["work_day"] <= today_for(request.user):
-        raise ValidationError({"work_day": "Use a past or present work date on or after the project start."})
-    task = None
-    if "task_id" in data:
-        task = get_object_or_404(project.tasks.filter(plans__cycle__is_draft=False).distinct(), pk=data["task_id"])
-    terms_row = payable(project, data["work_day"])
-    row = build_receivable(project, data["work_day"], terms_row, gross=data["hours"] * terms_row.rate,
-                           hours=data["hours"], location=data["location"], task=task)
+    row = record_hourly_work(project, today_for(request.user), data)
     return Response(receivable_data(row), status=201)
 
 
