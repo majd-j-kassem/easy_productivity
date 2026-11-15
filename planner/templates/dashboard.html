@@ -4,6 +4,7 @@
 <header class="masthead">
   <a href="/" class="brand"><span class="brand-mark" aria-hidden="true">P</span> {% translate "Productivity Studio" %}</a>
   <nav aria-label="Account">
+    <a class="button" href="{% url 'weekly_view' %}">This week</a>
     <button id="notifications" type="button">{% translate "Notifications" %}</button>
     <button id="preferences" type="button">{% translate "Preferences" %}</button>
     <form method="post" action="{% url 'logout' %}" novalidate>
