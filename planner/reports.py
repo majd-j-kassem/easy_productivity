@@ -21,11 +21,12 @@ from .rules import target_actual
 
 def report_data(project):
     summary = defaultdict(lambda: {"planned": 0, "actual": 0})
-    goals, cycles = [], []
+    goals, cycles, task_rows = [], [], []
     tasks = project.tasks.filter(plans__cycle__is_draft=False).distinct().prefetch_related(
         "goals__targets__entries", "goals__targets__plan__cycle",
     )
     for task in tasks.order_by("id"):
+        task_rows.append({"task_id": task.pk, "task": task.name, "status": task.status})
         for goal in task.goals.all():
             targets = sorted(goal.targets.all(), key=lambda target: target.plan.cycle.sequence)
             actuals = [target_actual(target) for target in targets]
@@ -53,7 +54,7 @@ def report_data(project):
             "currency": project.currency,
             "metrics": [{"metric": key[0], "measurement": key[1]} | values
                         for key, values in sorted(summary.items())],
-            "goals": goals, "cycles": cycles, "income": income}
+            "tasks": task_rows, "goals": goals, "cycles": cycles, "income": income}
 
 
 def xlsx_report(data):
@@ -63,7 +64,7 @@ def xlsx_report(data):
     payments = [{"receivable_id": row["id"]} | payment
                 for row in data["income"] for payment in row["payments"]]
     sheets = {"Project": [{key: data[key] for key in ("project_id", "project", "closed_on", "currency")}],
-              "Metrics": data["metrics"], "Goals": data["goals"], "Cycles": data["cycles"],
+              "Tasks": data["tasks"], "Metrics": data["metrics"], "Goals": data["goals"], "Cycles": data["cycles"],
               "Receivables": finance, "Payments": payments}
     for name, rows in sheets.items():
         sheet = workbook.create_sheet(name)
@@ -120,6 +121,8 @@ def pdf_report(data):
                                     [colors.white, colors.HexColor("#F2F6F5")])]))
         content.extend([table, Spacer(1, 12)])
 
+    add_table("Tasks", ["Task", "Status"],
+              [(row["task"], row["status"]) for row in data["tasks"]], [345, 105])
     add_table("Project totals", ["Metric", "Initial target", "Actual"],
               [(row["metric"], row["planned"], row["actual"]) for row in data["metrics"]],
               [270, 90, 90])
