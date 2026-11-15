@@ -77,8 +77,7 @@ function modalForm(title, body, onSave, save = "Save", submitStyle = "primary") 
     submit.disabled = true;
     error.hidden = true;
     try {
-      await onSave(toData(form), form);
-      modal.close();
+      if (await onSave(toData(form), form) !== false) modal.close();
     } catch (failure) {
       error.textContent = failure.message;
       error.hidden = false;
@@ -115,7 +114,9 @@ async function reload() {
   const path = projectPath(selected);
   const project = await api(path);
   if (token !== renderToken) return;
-  const chosen = project.cycles.find(row => row.id === selectedCycle) ?? project.cycles[0];
+  const chosen = project.cycles.find(row => row.id === selectedCycle) ??
+    project.cycles.find(row => !row.closed_at && !row.is_draft) ??
+    project.cycles.find(row => !row.is_draft);
   const results = await Promise.all([
     chosen ? api(`${path}cycles/${chosen.id}/`) : null,
     project.mode === "standard" ? null : api(path + "ledger/"),
@@ -124,42 +125,71 @@ async function reload() {
   if (token !== renderToken) return;
   renderProject(project, ...results);
 }
-function goalCard(goal) {
+function goalValue(value, kind, currency) {
+  return kind === "net_income" ? `${Number(value).toLocaleString("en")} ${escape(currency)}` : value;
+}
+function goalCard(goal, canChange, project, cycle) {
   const progress = goal.quantity ? Math.min(100, Math.round(goal.actual * 100 / goal.quantity)) : 100;
   const counter = goal.kind === "done" ? (goal.actual || goal.previous_actual ? "Done" : "Pending")
-    : `${goal.actual} / ${goal.quantity}`;
+    : `${goalValue(goal.actual, goal.kind, project.currency)} / ${goalValue(goal.quantity, goal.kind, project.currency)}${goal.kind === "hours" ? " h" : ""}`;
+  const ledgerNote = {
+    hours: "Updates from linked work in the income ledger.",
+    net_income: "Updates from after-tax income earned in this cycle.",
+  }[goal.kind];
   return `<div class="goal"><div class="line"><strong>${escape(goal.name)}</strong><span class="count">${counter}</span></div>
     <progress max="100" value="${progress}" aria-label="${escape(goal.name)}"></progress>
-    <small>${goal.cumulative} cumulative · ${goal.remaining_original} remaining against original target</small>
-    ${button("Daily entry", "entry", "", `data-target="${goal.id}" data-testid="daily-entry"`)}</div>`;
+    <small>${goalValue(goal.cumulative, goal.kind, project.currency)} cumulative ·
+      ${goalValue(goal.remaining_original, goal.kind, project.currency)} remaining against original target</small>
+    <div class="actions">${ledgerNote ? `<small>${ledgerNote}</small>`
+      : cycle.is_draft || cycle.status === "scheduled" ? ""
+      : button("Daily entry", "entry", "", `data-target="${goal.id}" data-testid="daily-entry"`)}
+    ${canChange && !cycle.is_draft && project.mode === "hourly" && goal.kind === "count" && !goal.actual && !goal.previous_actual
+      ? button("Switch to hours", "goal-hours", "", `data-target="${goal.id}"`) : ""}
+    ${canChange ? button("Delete goal", "delete-goal", "danger-outline", `data-target="${goal.id}"`) : ""}</div></div>`;
 }
 function renderProject(project, cycle, ledger, report) {
   const path = projectPath(project.id);
   const isOpen = project.status === "active";
   const reportSection = report ? `<article class="card"><div class="line"><h2>Final report</h2><div class="actions">
     <a class="button" href="${root + path}report.pdf">Download PDF</a><a class="button" href="${root + path}report.xlsx">Download Excel</a>
-    </div></div>${table(["Task", "Goal", "Planned", "Actual", "Gap", "Reason"],
-      report.goals.map(row => [row.task, row.goal, row.planned, row.actual, row.gap, row.reason]))}</article>` : "";
-  const currentCycle = project.cycles.find(row => !row.closed_at);
-  const cycleSection = cycle ? `<article class="card"><div class="line"><h2>Cycle ${cycle.sequence}</h2><span class="pill">${escape(label(cycle.status))}</span></div>
+    </div></div>${table(["Task", "Status"], report.tasks.map(row => [row.task, row.status]))}
+    ${report.goals.length ? table(["Task", "Goal", "Planned", "Actual", "Gap", "Reason"],
+      report.goals.map(row => [row.task, row.goal, row.planned, row.actual, row.gap, row.reason])) : ""}</article>` : "";
+  const currentCycle = project.cycles.find(row => !row.closed_at && !row.is_draft);
+  const cycleList = `<article class="card"><div class="line"><h2>Project cycles</h2>
+    ${isOpen ? button("Plan next cycle", "draft-cycle", "primary") : ""}</div>
+    <ul class="ledger-list">${project.cycles.map(item => `<li class="line">
+      ${button(`Cycle ${item.sequence} · ${item.start} to ${item.end}`, "view-cycle",
+        item.id === cycle?.id ? "primary" : "", `data-cycle="${item.id}"`)}
+      <span class="pill" data-state="${escape(item.status)}">${escape(label(item.status))}</span></li>`).join("")}</ul></article>`;
+  const cycleSection = cycle ? `<article class="card"><div class="line"><h2>Cycle ${cycle.sequence}</h2><span class="pill" data-state="${escape(cycle.status)}">${escape(label(cycle.status))}</span></div>
     <div class="cycle-toolbar"><p>${cycle.start} to ${cycle.end}</p>
-    ${select("View cycle", "cycle", project.cycles.map(item => [item.id, `Cycle ${item.sequence} · ${item.end}`]), cycle.id)}
     ${select("Filter tasks", "local-status", taskStatuses)}</div>
-    <div class="actions">${isOpen && !cycle.closed_at ? button("Add task", "task", "primary", 'data-testid="add-task"') : ""}
+    ${cycle.is_draft ? '<p class="muted">You can plan this cycle now. Progress opens after the previous cycle closes and the start date arrives.</p>' : ""}
+    <div class="actions">${isOpen && !cycle.closed_at
+      ? button("Edit cycle dates", "edit-cycle") + button("Add task", "task", "primary", 'data-testid="add-task"') : ""}
     ${cycle.status === "review" && isOpen ? button("Review and close cycle", "review", "primary", 'data-testid="review-cycle"') : ""}</div>
     <div id="plans">${cycle.plans.map(plan => `<section class="task" data-status="${escape(plan.status)}">
-      <div class="line"><div><h3>${escape(plan.name)}</h3><small>${escape(plan.kind)} · ${escape(plan.priority)} priority</small></div>
-      <span class="pill">${escape(plan.decision || plan.status)}</span></div>
+      <div class="line"><div><h3>${escape(plan.name)}</h3><small>${plan.kind ? `${escape(plan.kind)} · ` : ""}${escape(plan.priority)} priority</small></div>
+      <span class="pill" data-state="${escape(plan.status)}">${escape(plan.decision || plan.status)}</span></div>
       ${plan.reason ? `<p class="muted">${escape(plan.reason)} ${escape(plan.note)}</p>` : ""}
+      ${plan.description ? `<p>${escape(plan.description)}</p>` : ""}
+      ${plan.reference_url ? `<p class="muted">Reference · ${escape(plan.reference_url)}</p>` : ""}
       ${Object.keys(plan.values).length ? `<dl class="values">${Object.entries(plan.values).map(([key, value]) =>
         `<div><dt>${escape(label(key))}</dt><dd>${escape(value)}</dd></div>`).join("")}</dl>` : ""}
-      ${plan.targets.map(goalCard).join("")}
-      ${!cycle.closed_at && isOpen && plan.status === "open" ? button("Edit plan", "plan", "", `data-plan="${plan.id}"`) : ""}
-      ${!cycle.closed_at && isOpen && plan.status === "open" && plan.targets.every(goal => goal.actual >= goal.quantity)
-        ? button("Confirm complete", "complete", "", `data-plan="${plan.id}"`) : ""}</section>`).join("") ||
+      ${plan.targets.map(goal => goalCard(goal, !cycle.closed_at && isOpen && plan.status === "open", project, cycle)).join("")}
+      <div class="actions">
+      ${!cycle.closed_at && isOpen && plan.status === "open"
+        ? button("Edit plan", "plan", "", `data-plan="${plan.id}"`) +
+          button("Add goal", "goal", "", `data-plan="${plan.id}"`) : ""}
+      ${!cycle.closed_at && !cycle.is_draft && cycle.status !== "scheduled" && isOpen &&
+        plan.status === "open" && plan.targets.every(goal => goal.actual >= goal.quantity)
+        ? button("Confirm complete", "complete", "", `data-plan="${plan.id}"`) : ""}
+      ${!cycle.closed_at && isOpen
+        ? button("Delete task", "delete-task", "danger-outline", `data-plan="${plan.id}"`) : ""}</div></section>`).join("") ||
     '<p class="muted">No tasks planned in this cycle.</p>'}</div></article>` : "";
   detail.innerHTML = `<article class="card project-header"><div class="line"><div><p class="eyebrow">Selected project</p>
-    <h2>${escape(project.name)}</h2></div><span class="pill">${escape(label(project.status))}</span></div>
+    <h2>${escape(project.name)}</h2></div><span class="pill" data-state="${escape(project.status)}">${escape(label(project.status))}</span></div>
     <dl class="values"><div><dt>Started</dt><dd>${project.start}</dd></div>
     <div><dt>Planned end</dt><dd>${project.planned_end || "—"}</dd></div>
     <div><dt>Review interval</dt><dd>${project.interval} ${escape(project.interval_unit)}</dd></div>
@@ -168,18 +198,23 @@ function renderProject(project, cycle, ledger, report) {
     <div class="actions">${isOpen ? button("Edit project", "edit-project") + button("Task types", "kinds") : ""}
     ${project.status !== "closed" ? button(project.status === "awaiting_payment" ? "Confirm closure" : "End project", "finish") : ""}
     ${button("Delete project", "delete-project", "danger-outline", 'data-testid="delete-project"')}</div>
-    </article>${reportSection}${cycleSection}${ledger ? ledgerHtml(project, ledger) : ""}`;
-  detail.querySelector("[name=cycle]")?.addEventListener("change", safe(async event => {
-    selectedCycle = Number(event.target.value);
-    await reload();
-  }));
+    </article>${cycleList}${reportSection}${cycleSection}${ledger ? ledgerHtml(project, ledger) : ""}`;
   detail.querySelector("[name=local-status]")?.addEventListener("change", event => {
     detail.querySelectorAll("[data-status]").forEach(item => {
       item.hidden = Boolean(event.target.value && item.dataset.status !== event.target.value);
     });
   });
+  const findPlan = element => cycle.plans.find(plan => plan.id === Number(element.dataset.plan));
+  const findGoal = element => cycle.plans.flatMap(plan => plan.targets)
+    .find(goal => goal.id === Number(element.dataset.target));
   const actions = {
-    "edit-project": () => projectForm(project), kinds: () => kindPicker(project),
+    "edit-project": () => projectForm(project, currentCycle), kinds: () => kindPicker(project),
+    "edit-cycle": () => cycleDatesForm(project, cycle),
+    "draft-cycle": () => draftCycleForm(project),
+    "view-cycle": async element => {
+      selectedCycle = Number(element.dataset.cycle);
+      await reload();
+    },
     "delete-project": () => modalForm("Delete project?", `<p>Permanently delete <strong>${escape(project.name)}</strong>
       and its tasks, progress, and financial records? This action cannot be undone.</p>`, async () => {
       await api(path, "DELETE");
@@ -189,21 +224,45 @@ function renderProject(project, cycle, ledger, report) {
       message(`Deleted project: ${project.name}`);
       await safe(reload)();
     }, "Delete project", "danger"),
-    task: () => taskForm(project), review: () => reviewForm(project, cycle),
+    task: () => taskForm(project, cycle), review: () => reviewForm(project, cycle),
     finish: async () => reviewForm(project, currentCycle ? await api(`${path}cycles/${currentCycle.id}/`) : null, true),
     complete: element => modalForm("Confirm task completion", "<p>This closes the task for new daily entries.</p>", async () => {
       await api(path + `plans/${element.dataset.plan}/complete/`, "POST", {});
       await reload();
     }, "Confirm complete"),
-    plan: element => planForm(project, cycle.plans.find(plan => plan.id === Number(element.dataset.plan))),
+    plan: element => planForm(project, findPlan(element)),
+    goal: element => goalForm(project, findPlan(element)),
+    "delete-task": element => {
+      const plan = findPlan(element);
+      confirmDelete("task", plan.name, path + `tasks/${plan.task_id}/`,
+        "Its goals and recorded progress will also be deleted.");
+    },
+    "delete-goal": element => {
+      const goal = findGoal(element);
+      confirmDelete("goal", goal.name, path + `goals/${goal.goal_id}/`,
+        ["hours", "net_income"].includes(goal.kind) ? "Recorded work stays in the income ledger." : "Its recorded progress will also be deleted.");
+    },
+    "goal-hours": element => hoursGoalForm(project, findGoal(element)),
     entry: element => {
       const id = Number(element.dataset.target);
       const plan = cycle.plans.find(row => row.targets.some(target => target.id === id));
       return entryForm(project, cycle, plan, plan.targets.find(target => target.id === id));
     },
-    terms: () => termsForm(project), hourly: () => hourlyForm(project, cycle),
+    terms: () => termsForm(project), hourly: async () => hourlyForm(project, cycle?.is_draft && currentCycle
+      ? await api(`${path}cycles/${currentCycle.id}/`) : cycle),
     monthly: () => monthlyForm(project),
     payment: element => paymentForm(project, ledger.items.find(item => item.id === Number(element.dataset.receivable))),
+    "delete-receivable": element => {
+      const item = ledger.items.find(row => row.id === Number(element.dataset.receivable));
+      confirmDelete("income entry", item.month?.slice(0, 7) || item.work_day, path + `ledger/${item.id}/`,
+        "Any goal progress based on this entry will be recalculated.");
+    },
+    "delete-payment": element => {
+      const item = ledger.items.find(row => row.id === Number(element.dataset.receivable));
+      const payment = item.payments.find(row => row.id === Number(element.dataset.payment));
+      confirmDelete("payment", `${payment.amount} ${project.currency} on ${payment.received_on}`,
+        path + `ledger/${item.id}/payments/${payment.id}/`, "The outstanding balance will increase.");
+    },
   };
   detail.querySelectorAll("[data-action]").forEach(element => {
     element.onclick = safe(() => actions[element.dataset.action](element));
@@ -214,22 +273,151 @@ function table(headers, rows) {
     </tr></thead><tbody>${rows.map(row => `<tr>${row.map(value => `<td>${escape(value)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`
     : '<p class="muted">No records yet.</p>';
 }
-async function projectForm(project = null) {
-  const pref = await api("preferences/");
-  modalForm(project ? "Edit project" : "New project", `<div class="form-grid">
-    ${input("Project name", "name", project?.name)}
-    ${input("Planned end (optional)", "planned_end", project?.planned_end, "date")}
-    ${project ? "" : input("Start date", "start", valueDate(pref.timezone), "date") +
-      input("First review (optional)", "first_review", "", "date") +
-      number("Review interval", "interval", pref.interval) + select("Interval unit", "interval_unit", units, pref.interval_unit) +
-      select("Project type", "mode", [["standard", "Standard"], ["hourly", "Hourly income"], ["monthly", "Monthly income"]], "standard") +
-      input("Financial project currency", "currency", pref.currency)}</div>`, async data => {
-    const result = project ? await api(projectPath(project.id), "PATCH", {...data, planned_end: data.planned_end || null})
-      : await api("projects/", "POST", sparse(data));
-    selected = result.id;
-    selectedCycle = null;
-    await reload();
+function confirmDelete(noun, name, path, impact = "") {
+  return modalForm(`Delete ${noun}?`, `<p>Permanently delete <strong>${escape(name)}</strong>? ${escape(impact)}</p>`,
+    async () => {
+      await api(path, "DELETE");
+      message(`Deleted ${noun}: ${name}`);
+      await safe(reload)();
+    }, `Delete ${noun}`, "danger");
+}
+function cycleDateFields(cycle) {
+  return `<div class="form-grid">
+    ${input("Start date", "start", cycle.start, "date", cycle.sequence === 1 ? "" : "disabled")}
+    ${input("Review date", "end", cycle.end, "date")}</div>`;
+}
+function cycleDatesForm(project, cycle) {
+  return modalForm(`Edit cycle ${cycle.sequence} dates`, cycleDateFields(cycle), async data => {
+    await api(projectPath(project.id) + `cycles/${cycle.id}/`, "PATCH", data);
+    await safe(reload)();
   });
+}
+async function draftCycleForm(project) {
+  const path = projectPath(project.id) + "cycles/";
+  const previous = await api(path + `${project.cycles[0].id}/`);
+  const suggestions = previous.plans.map(plan => `<label class="check">
+    <input type="checkbox" name="source_plan_ids" value="${plan.id}">${escape(plan.name)}</label>`).join("");
+  modalForm("Plan next cycle", `<p>Create a draft after cycle ${previous.sequence}. Select tasks to copy as new work.</p>
+    ${suggestions ? `<fieldset><legend>Suggested tasks from the previous plan</legend>${suggestions}</fieldset>` : ""}
+    <p class="muted">If you want to continue an unfinished task, choose Carry forward when reviewing its cycle.</p>`,
+  async (_, form) => {
+    const source_plan_ids = new FormData(form).getAll("source_plan_ids").map(Number);
+    const draft = await api(path, "POST", {source_plan_ids});
+    selectedCycle = draft.id;
+    await safe(reload)();
+  }, "Create draft");
+}
+async function projectForm(project = null, cycle = null) {
+  if (project) {
+    return modalForm("Edit project", `<div class="form-grid">
+      ${input("Project name", "name", project.name)}
+      ${input("Planned end (optional)", "planned_end", project.planned_end, "date")}</div>
+      ${cycle ? `<fieldset><legend>Current cycle dates</legend>${cycleDateFields(cycle)}</fieldset>` : ""}`,
+    async ({name, planned_end, ...dates}) => {
+      await api(projectPath(project.id), "PATCH", {name, planned_end: planned_end || null,
+        ...(cycle ? {cycle: dates} : {})});
+      await safe(reload)();
+    });
+  }
+  const [pref, templates] = await Promise.all([api("preferences/"), api("project-templates/")]);
+  const form = modalForm("New project", `<p class="eyebrow" data-step aria-live="polite"></p>
+    <section data-project-settings>
+      ${select("Starter template", "starter_template", [["", "Start from scratch"],
+        ...templates.map(template => [template.id, template.title])])}
+      <p data-template-description class="muted"></p>
+      ${input("Project name", "name", "", "text", "required maxlength=160")}
+      <div class="form-grid">
+        ${select("Project type", "mode", [["standard", "Standard"], ["hourly", "Hourly income"], ["monthly", "Monthly income"]], "standard")}
+        ${input("Review interval", "interval", pref.interval, "number", "required min=1 max=365 step=1")}
+        ${select("Interval unit", "interval_unit", units, pref.interval_unit)}
+      </div>
+      <div data-currency hidden>${input("Currency", "currency", pref.currency, "text", 'required pattern="[A-Za-z]{3}"')}</div>
+      <details><summary>Dates and review settings</summary><div class="form-grid">
+        ${input("Start date", "start", valueDate(pref.timezone), "date", "required")}
+        ${input("First review (optional)", "first_review", "", "date")}
+        ${input("Planned end (optional)", "planned_end", "", "date")}
+      </div></details>
+    </section>
+    <section data-project-tasks hidden>
+      <p class="muted">Add your first tasks now or create the project and add them later.</p>
+      <div data-task-list></div>
+      <div class="actions">${button("Back", "wizard-back")}${button("Add task", "wizard-add")}</div>
+    </section>`, async () => {
+      if (step === 1) {
+        checkProject();
+        showStep(2);
+        return false;
+      }
+      const data = sparse(fieldValues(settings));
+      delete data.starter_template;
+      if (data.mode === "standard") delete data.currency;
+      data.tasks = editors.map(editor => editor.read());
+      const result = await api("projects/", "POST", data);
+      selected = result.id;
+      selectedCycle = null;
+      filters.reset();
+      await safe(reload)();
+    }, "Next");
+  const settings = form.querySelector("[data-project-settings]");
+  const tasks = form.querySelector("[data-project-tasks]");
+  const mode = settings.querySelector("[name=mode]");
+  const currency = settings.querySelector("[data-currency]");
+  const editors = [];
+  let step;
+  function checkProject() {
+    const data = fieldValues(settings);
+    if (!data.name.trim()) throw new Error("Enter a project name.");
+    if (!data.start) throw new Error("Choose a start date.");
+    if (!settings.querySelector("[name=interval]").checkValidity()) {
+      throw new Error("Enter a review interval between 1 and 365.");
+    }
+    if ([data.first_review, data.planned_end].some(day => day && day < data.start)) {
+      throw new Error("The review and end dates must be on or after the start date.");
+    }
+    if (mode.value !== "standard" && !currency.querySelector("input").checkValidity()) {
+      throw new Error("Enter a three-letter currency code.");
+    }
+  }
+  function showStep(number) {
+    step = number;
+    settings.hidden = step !== 1;
+    tasks.hidden = step !== 2;
+    form.querySelector("[data-step]").textContent =
+      step === 1 ? "1 of 2 · Project details" : "2 of 2 · Tasks and goals";
+    form.querySelector("[type=submit]").textContent = step === 1 ? "Next" : "Create project";
+  }
+  mode.onchange = () => {
+    currency.hidden = mode.value === "standard";
+    editors.forEach(editor => editor.setMode(mode.value));
+  };
+  form.querySelector("[data-action=wizard-back]").onclick = () => {
+    form.querySelector(".form-error").hidden = true;
+    showStep(1);
+    settings.querySelector("[name=name]").focus();
+  };
+  function addTask(name = "", focus = true) {
+    if (editors.length >= 50) return;
+    const editor = taskEditor({mode: mode.value, kinds: []}, () => {
+      editors.splice(editors.indexOf(editor), 1);
+      editor.element.remove();
+    });
+    editors.push(editor);
+    tasks.querySelector("[data-task-list]").append(editor.element);
+    const field = editor.element.querySelector("[name=task_name]");
+    field.value = name;
+    if (focus) field.focus();
+  }
+  form.querySelector("[data-action=wizard-add]").onclick = () => addTask();
+  const templateField = settings.querySelector("[name=starter_template]");
+  templateField.onchange = () => {
+    const template = templates.find(row => String(row.id) === templateField.value);
+    settings.querySelector("[data-template-description]").textContent = template?.description || "";
+    if (!template) return;
+    mode.value = template.mode;
+    mode.onchange();
+    if (!editors.length) template.tasks.forEach(name => addTask(name, false));
+  };
+  showStep(1);
 }
 function fieldRows(schema, values = {}) {
   return schema.map(field => {
@@ -253,6 +441,7 @@ function kindPicker(project) {
 }
 function kindForm(project, kind) {
   const form = modalForm(kind ? "Edit task type" : "New task type", `${input("Type name", "name", kind?.name)}
+    ${kind ? button("Delete task type", "delete-kind", "danger-outline") : ""}
     <p class="muted">Changes apply to new tasks. Existing tasks keep their saved fields.</p>
     <fieldset><legend>Task fields</legend><div data-fields="task_fields"></div>${button("Add task field", "add", "", 'data-list="task_fields"')}</fieldset>
     <fieldset><legend>Output detail fields</legend><div data-fields="entry_fields"></div>${button("Add detail field", "add", "", 'data-list="entry_fields"')}</fieldset>`,
@@ -269,6 +458,8 @@ function kindForm(project, kind) {
       await api(projectPath(project.id) + "kinds/" + (kind ? `${kind.id}/` : ""), kind ? "PATCH" : "POST", body);
       await reload();
     });
+  if (kind) form.querySelector("[data-action=delete-kind]").onclick = () =>
+    confirmDelete("task type", kind.name, projectPath(project.id) + `kinds/${kind.id}/`);
   function add(key, field = {}) {
     const row = document.createElement("div");
     row.className = "builder-row";
@@ -284,52 +475,138 @@ function kindForm(project, kind) {
   form.querySelectorAll("[data-list]").forEach(item => item.onclick = () => add(item.dataset.list));
   for (const key of ["task_fields", "entry_fields"]) (kind?.[key] || []).forEach(field => add(key, field));
 }
-function taskForm(project) {
-  if (!project.kinds.length) return kindForm(project);
-  const form = modalForm("New task", `<div class="form-grid">${input("Task name", "name")}
-    ${select("Type", "kind_id", project.kinds.map(kind => [kind.id, kind.name]))}
-    ${select("Priority", "priority", priorities, "normal")}</div>
-    <div class="form-grid" data-values></div>
-    <fieldset><legend>Goals</legend><div data-goals></div>${button("Add goal", "add-goal")}</fieldset>`,
-    async ({name, kind_id, priority}) => {
-      const goals = Array.from(form.querySelectorAll(".builder-row")).map(row => {
-        const goal = fieldValues(row);
-        if (goal.kind === "done") goal.quantity = 1;
-        return goal;
-      });
-      await api(projectPath(project.id) + "tasks/", "POST", {name, kind_id, priority, goals,
-        values: fieldValues(form.querySelector("[data-values]"))});
-      await reload();
-    });
-  const type = form.querySelector("[name=kind_id]");
-  const fields = () => {
-    const kind = project.kinds.find(item => item.id === Number(type.value));
-    form.querySelector("[data-values]").innerHTML = fieldRows(kind.task_fields);
-  };
-  type.onchange = fields;
-  fields();
-  function addGoal() {
-    const row = document.createElement("div");
-    row.className = "builder-row";
-    row.innerHTML = `<div class="form-grid">${input("Goal name", "name")}${input("Metric (e.g. Test cases)", "metric")}
-      ${select("Measurement", "kind", [["count", "Count outputs"], ["done", "Done"]])}
-      ${number("Target quantity", "quantity", 1)}</div><button type="button" data-remove>Remove goal</button>`;
-    const kind = row.querySelector("[name=kind]");
-    kind.onchange = () => row.querySelector("[name=quantity]").closest("label").hidden = kind.value === "done";
-    row.querySelector("[data-remove]").onclick = () => row.remove();
-    form.querySelector("[data-goals]").append(row);
+function goalEditor(mode, remove) {
+  const row = document.createElement("div");
+  row.className = "builder-row";
+  row.innerHTML = `<div class="form-grid">${input("Goal name", "name", "", "text", "maxlength=160")}
+    ${select("Measurement", "kind", [["done", "Done / not done"], ["count", "Count outputs"],
+      ["hours", "Hours worked"], ["net_income", "Net income"]], "done")}
+    ${input("Target quantity", "quantity", 1, "number")}</div>
+    <details><summary>Reporting label (optional)</summary>
+    ${input("Metric", "metric", "", "text", "maxlength=100")}</details>
+    ${remove ? button("Remove goal", "remove-goal") : ""}`;
+  const kind = row.querySelector("[name=kind]");
+  const quantity = row.querySelector("[name=quantity]");
+  function updateQuantity() {
+    const quantityLabel = quantity.closest("label");
+    quantityLabel.hidden = kind.value === "done";
+    quantityLabel.firstChild.textContent =
+      kind.value === "net_income" ? "Target amount (project currency)" : "Target quantity";
+    const decimal = ["hours", "net_income"].includes(kind.value);
+    quantity.min = decimal ? "0.01" : "1";
+    quantity.step = decimal ? "0.01" : "1";
   }
-  form.querySelector("[data-action=add-goal]").onclick = addGoal;
-  addGoal();
+  function setMode(mode) {
+    const hours = kind.querySelector('[value="hours"]');
+    const income = kind.querySelector('[value="net_income"]');
+    hours.hidden = hours.disabled = mode !== "hourly" && kind.value !== "hours";
+    income.hidden = income.disabled = mode === "standard" && kind.value !== "net_income";
+  }
+  kind.onchange = () => { updateQuantity(); setMode(currentMode); };
+  if (remove) row.querySelector("[data-action=remove-goal]").onclick = remove;
+  let currentMode = mode;
+  updateQuantity();
+  setMode(mode);
+  return {element: row, setMode(mode) { currentMode = mode; setMode(mode); }, read() {
+    const data = sparse(fieldValues(row));
+    if (!data.name?.trim()) throw new Error("Enter a name for each goal or remove the empty goal.");
+    if (data.kind === "hours" && currentMode !== "hourly") {
+      throw new Error("Choose another measurement or change the project type to Hourly income.");
+    }
+    if (data.kind === "net_income" && currentMode === "standard") {
+      throw new Error("Choose another measurement or select an income project type.");
+    }
+    if (data.kind !== "done" && (!data.quantity || !quantity.checkValidity())) {
+      throw new Error("Enter a valid positive target quantity.");
+    }
+    return {...data, quantity: data.kind === "done" ? 1 : data.quantity};
+  }};
+}
+function taskEditor(project, remove) {
+  const editor = document.createElement("fieldset");
+  editor.innerHTML = `<legend>Task</legend>
+    ${input("Task name", "task_name", "", "text", "maxlength=160")}
+    <details><summary>Task information (optional)</summary><div class="form-grid">
+      <label>Description<textarea name="description" maxlength="2000" rows="2"></textarea></label>
+      ${input("Reference URL", "reference_url", "", "url", "maxlength=2048")}
+      ${select("Priority", "priority", priorities, "normal")}
+      ${project.kinds.length ? select("Task type (optional)", "kind_id",
+        [["", "No type"], ...project.kinds.map(kind => [kind.id, kind.name])]) : ""}
+    </div><div class="form-grid" data-values></div></details>
+    <div data-goals></div>
+    <div class="actions">${button("Add goal", "add-goal")}${remove ? button("Remove task", "remove-task") : ""}</div>`;
+  const kind = editor.querySelector("[name=kind_id]");
+  if (kind) kind.onchange = () => {
+    const template = project.kinds.find(item => item.id === Number(kind.value));
+    editor.querySelector("[data-values]").innerHTML = fieldRows(template?.task_fields || []);
+  };
+  const goals = [];
+  let mode = project.mode;
+  editor.querySelector("[data-action=add-goal]").onclick = () => {
+    if (goals.length >= 20) return;
+    const goal = goalEditor(mode, () => {
+      goals.splice(goals.indexOf(goal), 1);
+      goal.element.remove();
+    });
+    goals.push(goal);
+    editor.querySelector("[data-goals]").append(goal.element);
+    goal.element.querySelector("[name=name]").focus();
+  };
+  if (remove) editor.querySelector("[data-action=remove-task]").onclick = remove;
+  return {element: editor, setMode(nextMode) {
+    mode = nextMode;
+    goals.forEach(goal => goal.setMode(mode));
+  }, read() {
+    const name = editor.querySelector("[name=task_name]").value.trim();
+    if (!name) throw new Error("Enter a name for each task or remove the empty task.");
+    return {name, priority: editor.querySelector("[name=priority]").value,
+      description: editor.querySelector("[name=description]").value,
+      reference_url: editor.querySelector("[name=reference_url]").value,
+      ...(kind?.value ? {kind_id: kind.value} : {}),
+      values: fieldValues(editor.querySelector("[data-values]")), goals: goals.map(goal => goal.read())};
+  }};
+}
+function taskForm(project, cycle) {
+  const editor = taskEditor(project);
+  const form = modalForm("New task", '<div data-editor></div>', async () => {
+    const path = cycle.is_draft ? `cycles/${cycle.id}/tasks/` : "tasks/";
+    await api(projectPath(project.id) + path, "POST", editor.read());
+    await safe(reload)();
+  });
+  form.querySelector("[data-editor]").append(editor.element);
+  editor.element.querySelector("[name=task_name]").focus();
+}
+function goalForm(project, plan) {
+  const editor = goalEditor(project.mode);
+  const form = modalForm("New goal", '<div data-editor></div>', async () => {
+    await api(projectPath(project.id) + `plans/${plan.id}/goals/`, "POST", editor.read());
+    await safe(reload)();
+  });
+  form.querySelector("[data-editor]").append(editor.element);
+  editor.element.querySelector("[name=name]").focus();
+}
+function hoursGoalForm(project, goal) {
+  modalForm("Switch to Hours worked", `<p>Progress will come from hours already linked to this task in the income ledger.</p>
+    ${number("Target hours", "quantity", goal.quantity)}`, async data => {
+    await api(projectPath(project.id) + `goals/${goal.goal_id}/`, "PATCH", data);
+    await safe(reload)();
+  }, "Switch to hours");
 }
 function planForm(project, plan) {
-  modalForm("Edit cycle plan", `${select("Priority", "priority", priorities, plan.priority)}
-    ${plan.targets.filter(target => target.kind === "count").map(target =>
-    number(`Target for ${target.name}`, `target-${target.id}`, target.quantity)).join("")}`,
-  async data => {
-    const targets = Object.fromEntries(Object.entries(data).filter(([key]) => key.startsWith("target-"))
-      .map(([key, value]) => [key.slice(7), value]));
-    await api(projectPath(project.id) + `plans/${plan.id}/`, "PATCH", {priority: data.priority, targets});
+  const goals = plan.targets.map(target => target.kind === "done"
+    ? `<p><strong>${escape(target.name)}</strong> · Done / not done</p>`
+    : number(`Target for ${target.name}${target.kind === "net_income" ? ` (${project.currency})` : ""}`,
+      `target-${target.id}`, target.quantity)).join("");
+  modalForm("Edit cycle plan", `<div class="form-grid">
+    ${input("Task name", "name", plan.name, "text", "maxlength=160")}
+    ${select("Priority", "priority", priorities, plan.priority)}
+    <label>Description<textarea name="description" maxlength="2000" rows="2">${escape(plan.description)}</textarea></label>
+    ${input("Reference URL", "reference_url", plan.reference_url, "url", "maxlength=2048")}</div>
+    <fieldset><legend>Goals</legend>${goals || '<p class="muted">No goals in this cycle. Use Add goal to create one.</p>'}</fieldset>`,
+  async ({name, description, reference_url, priority, ...quantities}) => {
+    const targets = Object.fromEntries(Object.entries(quantities).map(([key, value]) => [key.slice(7), value]));
+    await api(projectPath(project.id) + `plans/${plan.id}/`, "PATCH",
+      {name, description, reference_url, priority, targets});
     await reload();
   });
 }
@@ -420,8 +697,14 @@ function ledgerHtml(project, ledger) {
     <div><dt>Received</dt><dd>${escape(item.received)}</dd></div><div><dt>Remaining</dt><dd>${escape(item.remaining)}</dd></div>
     ${item.hours ? `<div><dt>Hours</dt><dd>${escape(item.hours)}</dd></div>` : ""}
     ${item.location ? `<div><dt>Location</dt><dd>${escape(item.location)}</dd></div>` : ""}</dl>
-    ${item.payments.length ? table(["Receipt date", "Amount"], item.payments.map(payment => [payment.received_on, payment.amount])) : ""}
-    ${project.status !== "closed" && Number(item.remaining) > 0 ? button("Record payment", "payment", "", `data-receivable="${item.id}"`) : ""}</li>`).join("");
+    ${item.payments.length ? `<ul class="ledger-list" aria-label="Payments">${item.payments.map(payment => `<li class="line">
+      <span>${escape(payment.received_on)} · ${escape(payment.amount)} ${escape(ledger.currency)}</span>
+      ${project.status !== "closed" ? button("Delete payment", "delete-payment", "danger-outline",
+        `data-receivable="${item.id}" data-payment="${payment.id}"`) : ""}</li>`).join("")}</ul>` : ""}
+    <div class="actions">
+    ${project.status !== "closed" && Number(item.remaining) > 0 ? button("Record payment", "payment", "", `data-receivable="${item.id}"`) : ""}
+    ${active && !item.payments.length ? button("Delete income entry", "delete-receivable", "danger-outline", `data-receivable="${item.id}"`) : ""}
+    </div></li>`).join("");
   return `<article class="card"><div class="line"><h2>Income ledger · ${escape(ledger.currency)}</h2><span class="pill">${escape(ledger.remaining)} remaining</span></div>
     <div class="actions">${active ? button("Pay terms", "terms") + (project.mode === "hourly"
       ? button("Record hourly work", "hourly", "primary") : button("Record partial month", "monthly", "primary")) : ""}</div>
@@ -431,13 +714,19 @@ function ledgerHtml(project, ledger) {
 async function termsForm(project) {
   const path = projectPath(project.id) + "terms/";
   const rows = await api(path);
-  modalForm("Pay terms", table(["Effective from", "Rate", "Tax %"], rows.map(row => [row.effective_on, row.rate, row.tax_pct]))
+  const form = modalForm("Pay terms", rows.map(row => `<div class="line builder-row">
+    <span>Effective ${escape(row.effective_on)} · ${escape(row.rate)} ${escape(project.currency)} · ${escape(row.tax_pct)}% tax</span>
+    ${button("Delete pay terms", "delete-terms", "danger-outline", `data-terms="${row.id}"`)}</div>`).join("")
     + `<div class="form-grid">${input("Effective date", "effective_on", rows.length ? "" : project.start, "date")}
     ${number(project.mode === "hourly" ? "Hourly rate" : "Monthly gross", "rate")}
     ${number("Tax percentage", "tax_pct", 0)}</div>`, async data => {
     await api(path, "POST", data);
     await reload();
   }, "Add pay terms");
+  form.querySelectorAll("[data-terms]").forEach(item => item.onclick = () => {
+    const row = rows.find(terms => terms.id === Number(item.dataset.terms));
+    confirmDelete("pay terms", `Effective ${row.effective_on}`, path + `${row.id}/`);
+  });
 }
 async function hourlyForm(project, cycle) {
   const pref = await api("preferences/");

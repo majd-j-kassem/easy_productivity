@@ -5,10 +5,15 @@
   <p class="eyebrow">{% translate "Productivity Studio" %}</p>
   <h1>{{ heading }}</h1>
   {% if email %}<p>{{ email }}</p>{% endif %}
+  {% if validlink == False %}<p>This password reset link is invalid or expired.</p>{% else %}
   <form method="post" novalidate>
     {% csrf_token %}
     {{ form.as_p }}
     <button class="primary" type="submit">{{ heading }}</button>
   </form>
+  {% endif %}
+  {% if request.resolver_match.url_name == "login" %}
+    <p><a href="{% url 'register' %}">Create account</a> · <a href="{% url 'password_reset' %}">Forgot password?</a></p>
+  {% endif %}
 </main>
 {% endblock %}

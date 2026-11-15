@@ -34,7 +34,7 @@ class Command(BaseCommand):
             now = timezone.localtime(timezone.now(), ZoneInfo(profile.timezone))
             if project.mode == "monthly":
                 generate_months(project, now.date())
-            cycle = project.cycles.filter(closed_at=None, end__lte=now.date()).first()
+            cycle = project.cycles.filter(closed_at=None, is_draft=False, end__lte=now.date()).first()
             if cycle is None or (cycle.end == now.date() and now.time() < profile.reminder_time):
                 return
             reminder, _ = Notification.objects.get_or_create(cycle=cycle)

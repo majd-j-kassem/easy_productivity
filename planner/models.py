@@ -61,11 +61,12 @@ class Cycle(models.Model):
     start = models.DateField()
     end = models.DateField()
     closed_at = models.DateTimeField(null=True)
+    is_draft = models.BooleanField(default=False)
 
     class Meta:
         constraints = [
             models.UniqueConstraint(fields=["project", "sequence"], name="unique_cycle_sequence"),
-            models.UniqueConstraint(fields=["project"], condition=models.Q(closed_at__isnull=True),
+            models.UniqueConstraint(fields=["project"], condition=models.Q(closed_at__isnull=True, is_draft=False),
                                     name="one_open_cycle"),
         ]
 
@@ -80,12 +81,14 @@ class TaskKind(models.Model):
 class Task(models.Model):
     STATES = [(key, key.title()) for key in ("open", "completed", "partial", "discarded")]
     project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="tasks")
-    kind = models.ForeignKey(TaskKind, on_delete=models.RESTRICT)
+    kind = models.ForeignKey(TaskKind, on_delete=models.RESTRICT, null=True, blank=True)
     name = models.CharField(max_length=160)
     status = models.CharField(max_length=12, choices=STATES, default="open")
     task_fields = models.JSONField(default=list)
     entry_fields = models.JSONField(default=list)
     values = models.JSONField(default=dict)
+    description = models.TextField(blank=True)
+    reference_url = models.URLField(max_length=2048, blank=True)
     closed_reason = models.CharField(max_length=120, blank=True)
     closed_reason_ref = models.ForeignKey(Reason, null=True, on_delete=models.PROTECT)
     closed_note = models.CharField(max_length=500, blank=True)
@@ -95,7 +98,10 @@ class Goal(models.Model):
     task = models.ForeignKey(Task, on_delete=models.CASCADE, related_name="goals")
     name = models.CharField(max_length=160)
     metric = models.CharField(max_length=100)
-    kind = models.CharField(max_length=5, choices=[("count", "Count"), ("done", "Done")])
+    kind = models.CharField(
+        max_length=10,
+        choices=[("count", "Count"), ("done", "Done"), ("hours", "Hours worked"), ("net_income", "Net income")],
+    )
 
 
 class Plan(models.Model):
@@ -114,10 +120,13 @@ class Plan(models.Model):
 class Target(models.Model):
     plan = models.ForeignKey(Plan, on_delete=models.CASCADE, related_name="targets")
     goal = models.ForeignKey(Goal, on_delete=models.CASCADE, related_name="targets")
-    quantity = models.PositiveIntegerField()
+    quantity = models.DecimalField(max_digits=9, decimal_places=2)
 
     class Meta:
-        constraints = [models.UniqueConstraint(fields=["plan", "goal"], name="unique_plan_target")]
+        constraints = [
+            models.UniqueConstraint(fields=["plan", "goal"], name="unique_plan_target"),
+            models.CheckConstraint(condition=models.Q(quantity__gte=0), name="nonnegative_target_quantity"),
+        ]
 
 
 class DailyEntry(models.Model):
@@ -176,3 +185,23 @@ class Notification(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     read_at = models.DateTimeField(null=True)
     emailed_at = models.DateTimeField(null=True)
+
+
+class OnboardingTemplate(models.Model):
+    title = models.CharField(max_length=120)
+    description = models.CharField(max_length=240)
+    mode = models.CharField(max_length=10, choices=Project.MODES)
+    tasks = models.TextField(help_text="One suggested task per line.")
+    enabled = models.BooleanField(default=True)
+
+    def __str__(self):
+        return self.title
+
+
+class HelpArticle(models.Model):
+    title = models.CharField(max_length=120)
+    body = models.TextField()
+    published = models.BooleanField(default=False)
+
+    def __str__(self):
+        return self.title

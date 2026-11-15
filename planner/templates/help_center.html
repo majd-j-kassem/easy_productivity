@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block body %}
+<main class="workspace">
+  <p><a href="{% url 'dashboard' %}">Back to workspace</a></p>
+  <h1>Help center</h1>
+  {% for article in articles %}
+    <article class="card"><h2>{{ article.title }}</h2><p>{{ article.body|linebreaksbr }}</p></article>
+  {% empty %}<p>No help articles have been published yet.</p>{% endfor %}
+</main>
+{% endblock %}

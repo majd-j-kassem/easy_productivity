@@ -1,4 +1,4 @@
-from .rules import count_items, paid, today_for
+from .rules import target_actual, paid, today_for
 
 
 def fields_of(instance, names):
@@ -14,9 +14,15 @@ def kind_data(kind):
 
 
 def cycle_data(cycle, today):
-    return fields_of(cycle, "id sequence start end closed_at") | {
-        "status": "closed" if cycle.closed_at else "review" if cycle.end <= today else "open",
-    }
+    if cycle.is_draft:
+        status = "draft"
+    elif cycle.closed_at:
+        status = "closed"
+    elif cycle.start > today:
+        status = "scheduled"
+    else:
+        status = "review" if cycle.end <= today else "open"
+    return fields_of(cycle, "id sequence start end closed_at is_draft") | {"status": status}
 
 
 def target_data(target):
@@ -24,7 +30,7 @@ def target_data(target):
     targets = list(goal.targets.select_related("goal", "plan__cycle").filter(
         plan__cycle__sequence__lte=target.plan.cycle.sequence
     ).order_by("plan__cycle__sequence"))
-    actuals = [count_items(item) for item in targets]
+    actuals = [target_actual(item) for item in targets]
     previous = sum(actuals[:-1])
     current = actuals[-1]
     first_quantity = targets[0].quantity
@@ -41,7 +47,9 @@ def plan_data(plan):
     task = plan.task
     return fields_of(plan, "id priority decision reason note") | {
         "task_id": task.pk, "name": task.name, "status": task.status,
-        "kind": task.kind.name, "values": task.values, "entry_fields": task.entry_fields,
+        "kind": task.kind.name if task.kind_id else "", "values": task.values,
+        "description": task.description, "reference_url": task.reference_url,
+        "entry_fields": task.entry_fields,
         "targets": [target_data(target) for target in plan.targets.select_related("goal", "plan__cycle")],
     }
 
