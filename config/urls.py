@@ -1,11 +1,15 @@
 from django.contrib import admin
 from django.contrib.auth import views as auth
-from django.urls import path
+from django.urls import include, path
+from wagtail.admin import urls as wagtail_admin_urls
 
 from planner import api, registration, reports, views
+from weekly.views import log_shift, weekly_view
 
 urlpatterns = [
     path("", views.dashboard, name="dashboard"),
+    path("week/", weekly_view, name="weekly_view"),
+    path("week/shifts/<int:item_id>/log/", log_shift, name="log_shift"),
     path("login/", auth.LoginView.as_view(template_name="auth.html",
                                           extra_context={"heading": "Sign in"}), name="login"),
     path("logout/", auth.LogoutView.as_view(), name="logout"),
@@ -26,10 +30,13 @@ urlpatterns = [
         "message": "You can now sign in with your new password."}), name="password_reset_complete"),
     path("signup/<uuid:token>/", views.signup, name="signup"),
     path("admin/", admin.site.urls),
+    path("cms/", include(wagtail_admin_urls)),
+    path("help/", views.help_center, name="help_center"),
     path("api/v1/preferences/", api.preferences),
     path("api/v1/reasons/", api.reasons),
     path("api/v1/reasons/<int:pk>/", api.reason_detail),
     path("api/v1/projects/", api.projects),
+    path("api/v1/project-templates/", api.project_templates),
     path("api/v1/projects/<int:pk>/", api.project_detail),
     path("api/v1/projects/<int:pk>/kinds/", api.kinds),
     path("api/v1/projects/<int:pk>/kinds/<int:kind_id>/", api.kind_detail),

@@ -318,9 +318,12 @@ async function projectForm(project = null, cycle = null) {
       await safe(reload)();
     });
   }
-  const pref = await api("preferences/");
+  const [pref, templates] = await Promise.all([api("preferences/"), api("project-templates/")]);
   const form = modalForm("New project", `<p class="eyebrow" data-step aria-live="polite"></p>
     <section data-project-settings>
+      ${select("Starter template", "starter_template", [["", "Start from scratch"],
+        ...templates.map(template => [template.id, template.title])])}
+      <p data-template-description class="muted"></p>
       ${input("Project name", "name", "", "text", "required maxlength=160")}
       <div class="form-grid">
         ${select("Project type", "mode", [["standard", "Standard"], ["hourly", "Hourly income"], ["monthly", "Monthly income"]], "standard")}
@@ -345,6 +348,7 @@ async function projectForm(project = null, cycle = null) {
         return false;
       }
       const data = sparse(fieldValues(settings));
+      delete data.starter_template;
       if (data.mode === "standard") delete data.currency;
       data.tasks = editors.map(editor => editor.read());
       const result = await api("projects/", "POST", data);
@@ -390,7 +394,7 @@ async function projectForm(project = null, cycle = null) {
     showStep(1);
     settings.querySelector("[name=name]").focus();
   };
-  form.querySelector("[data-action=wizard-add]").onclick = () => {
+  function addTask(name = "", focus = true) {
     if (editors.length >= 50) return;
     const editor = taskEditor({mode: mode.value, kinds: []}, () => {
       editors.splice(editors.indexOf(editor), 1);
@@ -398,7 +402,19 @@ async function projectForm(project = null, cycle = null) {
     });
     editors.push(editor);
     tasks.querySelector("[data-task-list]").append(editor.element);
-    editor.element.querySelector("[name=task_name]").focus();
+    const field = editor.element.querySelector("[name=task_name]");
+    field.value = name;
+    if (focus) field.focus();
+  }
+  form.querySelector("[data-action=wizard-add]").onclick = () => addTask();
+  const templateField = settings.querySelector("[name=starter_template]");
+  templateField.onchange = () => {
+    const template = templates.find(row => String(row.id) === templateField.value);
+    settings.querySelector("[data-template-description]").textContent = template?.description || "";
+    if (!template) return;
+    mode.value = template.mode;
+    mode.onchange();
+    if (!editors.length) template.tasks.forEach(name => addTask(name, false));
   };
   showStep(1);
 }
