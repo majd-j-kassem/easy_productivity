@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block body %}
+<main class="auth card">
+  <h1>{{ heading }}</h1>
+  <p>{{ message }}</p>
+  {% if confirm %}
+  <form method="post">{% csrf_token %}<button class="primary" type="submit">Verify email</button></form>
+  {% else %}
+  <a href="{% url 'login' %}">Return to sign in</a>
+  {% endif %}
+</main>
+{% endblock %}

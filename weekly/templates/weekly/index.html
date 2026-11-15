@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block body %}
+<main class="workspace">
+  <p><a href="{% url 'dashboard' %}">Back to workspace</a></p>
+  <header class="hero"><div><h1>Weekly overview</h1><p>{{ start|date:"M j" }} to {{ end|date:"M j, Y" }}</p></div>
+    <nav aria-label="Browse weeks"><a class="button" href="?week={{ previous|date:'Y-m-d' }}">Previous</a>
+      <a class="button" href="{% url 'weekly_view' %}">This week</a>
+      <a class="button" href="?week={{ next_week|date:'Y-m-d' }}">Next</a></nav>
+  </header>
+  {% for message in messages %}<p role="status">{{ message }}</p>{% endfor %}
+  <section class="card">
+    <h2>Deadlines and shifts</h2>
+    {% for item in items %}
+      <article class="task"><p><strong>{{ item.name }}</strong> · {{ item.get_kind_display }} · {{ item.day }}</p>
+      <p>{{ item.project.name }}{% if item.hours %} · {{ item.hours }} planned hours{% endif %}</p>
+      {% if item.ledger_entry_id %}<p>Hours recorded</p>
+      {% elif item.kind == "shift" and item.day <= today and item.project.status == "active" %}
+      <details><summary>Log hours</summary>
+        <form method="post" action="{% url 'log_shift' item.pk %}">
+          {% csrf_token %}
+          <label>Hours worked<input name="hours" type="number" inputmode="decimal" min="0.01" max="24"
+            step="0.01" value="{{ item.hours|stringformat:'g' }}" required></label>
+          <button class="primary" type="submit">Record hours</button>
+        </form>
+      </details>
+      {% endif %}</article>
+    {% empty %}<p>No deadlines or shifts planned this week.</p>{% endfor %}
+    <details {% if form.errors %}open{% endif %}><summary>Add deadline or shift</summary>
+      <form method="post">{% csrf_token %}{{ form.as_p }}<button class="primary" type="submit">Add to week</button></form>
+    </details>
+  </section>
+  <section class="card">
+    <h2>Goal progress</h2>
+    {% for row in goals %}
+    <p>{{ row.target.plan.cycle.project.name }} · {{ row.target.goal.name }} ·
+      {% if row.target.plan.cycle.is_draft %}Draft{% else %}{{ row.actual }} / {{ row.target.quantity }}{% endif %}
+      <small>Cycle {{ row.target.plan.cycle.sequence }}</small></p>
+    {% empty %}<p>No goals overlap this week.</p>{% endfor %}
+  </section>
+  <section class="card">
+    <h2>Income</h2>
+    {% for currency, total in balances %}
+    <h3>{{ currency }}</h3>
+    <dl class="values"><div><dt>Earned this week</dt><dd>{{ total.earned }}</dd></div>
+      <div><dt>Received this week</dt><dd>{{ total.received }}</dd></div>
+      <div><dt>Outstanding for this week’s work</dt><dd>{{ total.outstanding }}</dd></div></dl>
+    {% empty %}<p>No earnings or payments this week.</p>{% endfor %}
+  </section>
+</main>
+{% endblock %}

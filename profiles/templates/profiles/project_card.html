@@ -1,0 +1,10 @@
+<article class="task">
+  <h3>{{ project.name }}</h3>
+  {% for goal in project.goals %}
+  <div class="goal">
+    <strong>{{ goal.name }}</strong><small>{{ goal.task }}</small>
+    <p>Target {{ goal.target }} · Actual {{ goal.actual }}</p>
+    {% for url in goal.evidence %}<a href="{{ url }}" rel="noreferrer">{{ url }}</a>{% endfor %}
+  </div>
+  {% empty %}<p>No completed, non-financial goals are available for this project.</p>{% endfor %}
+</article>

@@ -61,11 +61,12 @@ class Cycle(models.Model):
     start = models.DateField()
     end = models.DateField()
     closed_at = models.DateTimeField(null=True)
+    is_draft = models.BooleanField(default=False)
 
     class Meta:
         constraints = [
             models.UniqueConstraint(fields=["project", "sequence"], name="unique_cycle_sequence"),
-            models.UniqueConstraint(fields=["project"], condition=models.Q(closed_at__isnull=True),
+            models.UniqueConstraint(fields=["project"], condition=models.Q(closed_at__isnull=True, is_draft=False),
                                     name="one_open_cycle"),
         ]
 
@@ -184,3 +185,23 @@ class Notification(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     read_at = models.DateTimeField(null=True)
     emailed_at = models.DateTimeField(null=True)
+
+
+class OnboardingTemplate(models.Model):
+    title = models.CharField(max_length=120)
+    description = models.CharField(max_length=240)
+    mode = models.CharField(max_length=10, choices=Project.MODES)
+    tasks = models.TextField(help_text="One suggested task per line.")
+    enabled = models.BooleanField(default=True)
+
+    def __str__(self):
+        return self.title
+
+
+class HelpArticle(models.Model):
+    title = models.CharField(max_length=120)
+    body = models.TextField()
+    published = models.BooleanField(default=False)
+
+    def __str__(self):
+        return self.title

@@ -45,7 +45,17 @@ class ProjectInput(s.Serializer):
     currency = s.RegexField(r"^[A-Za-z]{3}$", required=False)
 
 
+class CycleDatesInput(s.Serializer):
+    start = s.DateField(required=False)
+    end = s.DateField(required=False)
+
+
+class CycleDraftInput(s.Serializer):
+    source_plan_ids = s.ListField(child=s.IntegerField(min_value=1), default=list, max_length=50)
+
+
 class ProjectEdit(s.Serializer):
+    cycle = CycleDatesInput(required=False)
     name = s.CharField(max_length=160, required=False)
     planned_end = s.DateField(required=False, allow_null=True)
 
