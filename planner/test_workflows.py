@@ -316,3 +316,18 @@ def test_delete_ledger_payment_then_income_entry(account, django_user_model):
         needed = post(client, path + "ledger/hourly/", {"work_day": "2026-11-12", "hours": "3"})
         post(client, path + f"plans/{plan['id']}/complete/", {})
         assert client.delete(f"/api/v1/{path}ledger/{needed['id']}/").status_code == 400
+
+
+def test_completed_task_without_goals_appears_in_reports(account):
+    _, client = account
+    with patch("planner.api.today_for", return_value=date(2026, 11, 15)):
+        path = make_project(client)
+        plan = post(client, path + "tasks/", {"name": "Read syllabus"})
+        post(client, path + f"plans/{plan['id']}/complete/", {})
+        post(client, path + "finish/", {"decisions": {}})
+        url = f"/api/v1/{path}"
+        response = client.get(url + "report/")
+        assert response.data["tasks"] == [{"task_id": plan["task_id"], "task": "Read syllabus", "status": "completed"}]
+        workbook = load_workbook(BytesIO(client.get(url + "report.xlsx").content))
+        assert list(workbook["Tasks"].values)[1][-2:] == ("Read syllabus", "completed")
+        assert client.get(url + "report.pdf").content.startswith(b"%PDF")
