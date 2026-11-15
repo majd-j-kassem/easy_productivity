@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block body %}
+<main class="workspace">
+  <p><a href="{% url 'edit_profile' %}">Back to profile</a></p>
+  <section class="card">
+    <h1>Share professional profile</h1>
+    <p>Anyone with your link can view the selected fields until you revoke it.</p>
+    <form method="post">{% csrf_token %}{{ form.as_p }}
+      <button name="action" value="preview">Preview selected fields</button>
+      <button name="action" value="save" class="primary">Save sharing settings</button>
+    </form>
+    {% if preview != None %}<h2>Company view preview</h2>
+      {% include "profiles/fields.html" with fields=preview %}{% endif %}
+    {% if url %}
+      <label>Share link<input value="{{ url }}" readonly></label>
+      <form method="post">{% csrf_token %}<button name="action" value="revoke">Revoke link</button></form>
+    {% endif %}
+  </section>
+</main>
+{% endblock %}
