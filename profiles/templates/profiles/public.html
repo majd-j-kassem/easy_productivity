@@ -3,6 +3,7 @@
 <main class="workspace"><section class="card">
   <h1>Professional profile</h1>
   {% include "profiles/fields.html" %}
-  {% block portfolio %}{% endblock %}
+  {% if portfolio %}<h2>Completed projects</h2>
+  {% for project in portfolio %}{% include "profiles/project_card.html" %}{% endfor %}{% endif %}
 </section></main>
 {% endblock %}

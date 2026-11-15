@@ -56,6 +56,7 @@ def shared_profile(request, token):
                               profile__owner__is_active=True)
     response = render(request, "profiles/public.html", {
         "fields": visible_profile_fields(share.profile, share.visible_fields),
+        "portfolio": share.profile.published_projects.order_by("id").values_list("snapshot", flat=True),
     })
     response["X-Robots-Tag"] = "noindex, nofollow"
     response["Referrer-Policy"] = "no-referrer"

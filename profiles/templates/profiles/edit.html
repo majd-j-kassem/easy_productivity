@@ -8,7 +8,7 @@
     <form method="post">{% csrf_token %}{{ form.as_p }}
       <button class="primary" type="submit">Save profile</button>
     </form>
-    {% block profile_actions %}<p><a href="{% url 'manage_sharing' %}">Share profile</a></p>{% endblock %}
+    {% block profile_actions %}<p><a href="{% url 'manage_sharing' %}">Share profile</a> · <a href="{% url 'manage_portfolio' %}">Manage portfolio</a></p>{% endblock %}
   </section>
 </main>
 {% endblock %}
