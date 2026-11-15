@@ -5,11 +5,18 @@ from wagtail.admin import urls as wagtail_admin_urls
 
 from planner import api, registration, reports, views
 from weekly.views import log_shift, weekly_view
+from profiles.views import edit_profile
+from profiles.portfolio import manage_portfolio
+from profiles.sharing import manage_sharing, shared_profile
 
 urlpatterns = [
     path("", views.dashboard, name="dashboard"),
     path("week/", weekly_view, name="weekly_view"),
     path("week/shifts/<int:item_id>/log/", log_shift, name="log_shift"),
+    path("profile/", edit_profile, name="edit_profile"),
+    path("profile/sharing/", manage_sharing, name="manage_sharing"),
+    path("profile/portfolio/", manage_portfolio, name="manage_portfolio"),
+    path("shared-profile/<uuid:token>/", shared_profile, name="shared_profile"),
     path("login/", auth.LoginView.as_view(template_name="auth.html",
                                           extra_context={"heading": "Sign in"}), name="login"),
     path("logout/", auth.LogoutView.as_view(), name="logout"),
