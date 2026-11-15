@@ -4,6 +4,8 @@
 <header class="masthead">
   <a href="/" class="brand"><span class="brand-mark" aria-hidden="true">P</span> {% translate "Productivity Studio" %}</a>
   <nav aria-label="Account">
+    <a class="button" href="{% url 'help_center' %}">Help</a>
+    {% if request.user.is_staff %}<a class="button" href="/cms/">CMS</a>{% endif %}
     <button id="notifications" type="button">{% translate "Notifications" %}</button>
     <button id="preferences" type="button">{% translate "Preferences" %}</button>
     <form method="post" action="{% url 'logout' %}" novalidate>

@@ -18,6 +18,9 @@ INSTALLED_APPS = [
     "django.contrib.admin", "django.contrib.auth", "django.contrib.contenttypes",
     "django.contrib.sessions", "django.contrib.messages", "django.contrib.staticfiles",
     "rest_framework", "planner",
+    "wagtail.contrib.forms", "wagtail.contrib.redirects", "wagtail.embeds",
+    "wagtail.sites", "wagtail.users", "wagtail.snippets", "wagtail.documents",
+    "wagtail.images", "wagtail.search", "wagtail.admin", "wagtail", "modelcluster", "taggit",
 ]
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
@@ -25,8 +28,10 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "planner.middleware.StaffOnlyCMS",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "wagtail.contrib.redirects.middleware.RedirectMiddleware",
 ]
 TEMPLATES = [{
     "BACKEND": "django.template.backends.django.DjangoTemplates",
@@ -72,3 +77,9 @@ REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": ["rest_framework.authentication.SessionAuthentication"],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
 }
+
+WAGTAIL_SITE_NAME = "Productivity Studio"
+WAGTAILADMIN_BASE_URL = os.getenv("WAGTAILADMIN_BASE_URL", "http://localhost:8000")
+MEDIA_ROOT = BASE_DIR / "media"
+MEDIA_URL = "/media/"
+DATA_UPLOAD_MAX_NUMBER_FIELDS = 10_000

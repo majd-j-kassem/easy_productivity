@@ -64,3 +64,7 @@ python -m pytest -q
 ```
 
 Tests cover review rule immutability, user isolation, carry-forward and corrections, report downloads, financial closure, invite redemption, and reminder retries. Try creating a project with a review date of today for a quick manual review test.
+
+## Content administration
+
+Install updated requirements and run `python manage.py migrate`. Sign in as a superuser and open `/cms/` to manage onboarding templates and help articles under Snippets. Other staff need Wagtail admin access and the relevant model permissions. Set `WAGTAILADMIN_BASE_URL` to your deployed origin.

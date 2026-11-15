@@ -1,6 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth import views as auth
-from django.urls import path
+from django.urls import include, path
+from wagtail.admin import urls as wagtail_admin_urls
 
 from planner import api, reports, views
 
@@ -11,6 +12,8 @@ urlpatterns = [
     path("logout/", auth.LogoutView.as_view(), name="logout"),
     path("signup/<uuid:token>/", views.signup, name="signup"),
     path("admin/", admin.site.urls),
+    path("cms/", include(wagtail_admin_urls)),
+    path("help/", views.help_center, name="help_center"),
     path("api/v1/preferences/", api.preferences),
     path("api/v1/reasons/", api.reasons),
     path("api/v1/reasons/<int:pk>/", api.reason_detail),
